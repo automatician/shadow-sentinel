@@ -13,6 +13,37 @@ instant 1-command restores with loop-coupling safety.
 
 ---
 
+## Why This Is a Breakthrough: A Plain-English Explanation
+
+For thirty years, developers and system administrators have faced an "impossible triangle"
+when trying to protect their work on Linux:
+
+1. **Traditional Nightly Backups (Cron, Rsync, Cloud Snapshots):**
+   They run once a day (usually at 2:00 AM). If you, a script, or an AI agent overwrite a critical
+   configuration at 3:30 PM, up to 13 hours of uncommitted work vanish forever.
+2. **Automatic Git-Watchers (`gitwatch`):**
+   They attempt to capture changes in real time, but crash constantly on rapid consecutive writes
+   due to `.git/index.lock` collisions and quickly bloat your drive when large logfiles enter the folder.
+3. **Filesystem-Level Snapshots (ZFS, Btrfs):**
+   They operate on raw disk blocks, making it cumbersome to quickly restore a single broken file
+   or inspect human-readable line-by-line diffs.
+
+### How Shadow Sentinel Solves All Three at Once:
+- **Real-Time Kernel Protection:** The microsecond a file is touched and closed, Sentinel catches
+  the write. You never lose work between morning and evening.
+- **Logarithmic Multi-Scale Time Horizon:** Thanks to its geometric Decade Cascade, a single project
+  folder retains snapshots from 3 seconds ago, 5 minutes ago, today's morning shift, last weekend,
+  and all the way back across months or years.
+- **Tiny, Predictable Storage Footprint:** Because each tier strictly caps at 10 revisions, an
+  entire 35-day revision history for a typical script consumes less than 1.5 megabytes of space.
+  Storage never explodes.
+- **Hardware Isolation on Separate Volumes:** You can redirect the entire backup vault to an
+  external physical SSD, a mounted secondary drive, or a network share (`/etc/shadow-sentinel/config.json`).
+  Even if your primary operating system drive is formatted or crashes, your shadow vault on the
+  separate volume keeps every historic version safe and intact.
+
+---
+
 ## Dual-Version Architecture & Documentation Notice
 
 This documentation serves as the Single Source of Truth (SSOT) for both production releases:
@@ -27,7 +58,7 @@ Every section and feature below is explicitly tagged with its supported version.
 
 | Architectural Feature | Version 1.0.1 (Baseline) | Version 2.0.0 (Current Major) |
 | :--- | :--- | :--- |
-| **Kernel inotify (libc.so.6 ctypes)** | Yes (Zero dependencies) | Yes (Zero dependencies) |
+| **Kernel inotify (libc.so.6 ctypes)** | Yes (Zero deps) | Yes (Zero deps) |
 | **Marker Parameters** | 1 Parameter: `<size_mb>` | 3 Parameters: `<size_mb> [start] [end]` |
 | **Subfolder Policy Handling** | Parent inheritance only | Deepest marker wins (Longest prefix) |
 | **Backup Buffer Type** | Single 10-revision FIFO | Decade-Tier Cascade (T1..T128) |
@@ -38,8 +69,8 @@ Every section and feature below is explicitly tagged with its supported version.
 | **Restore Undo-Safety** | Yes (Loop-coupled) | Yes (Loop-coupled) |
 | **Terminal Display Mode** | Complete scrollable table | Interactive As-You-Type Live Explorer |
 | **Search Engine** | Argument filter: `sentinel <term>` | Live typing wildcard (*) OR content grep |
-| **Direct File Inspection** | CLI / external editor | Direct read-only nano view (`sentinel nano`) |
-| **File Type Classification** | Plain text paths | Functional extension icons (`📚`, `🐍`, etc.) |
+| **Direct File Inspection** | CLI only | Direct nano view (`sentinel nano <ID>`) |
+| **File Type Visual Classification** | Plain text paths | Functional extension icons (`📚`, `🐍`, etc.) |
 | **Catalog Integrity** | Append-only index | Self-healing (auto-purges ghost files) |
 
 ---
@@ -74,104 +105,89 @@ The microsecond an AI agent or automated script calls `write()` or overwrites a 
 
 ---
 
-## Detailed Feature Breakdown by Version
+## Core Engine Capabilities (Available in v1.0.1 and v2.0.0)
 
-### Feature 1: Kernel inotify & Zero Dependencies [v1.0.1 & v2.0.0]
-- **Supported in:** Version 1.0.1 and Version 2.0.0.
-- **Description:** Direct C bindings to standard Linux `libc.so.6` using Python's built-in `ctypes`.
-  Does not require external tools (`inotifywait`), third-party daemons, or compiler toolchains.
-  Runs out-of-the-box on Python 3.9+.
+1. **Decentralized Marker Control (`sentinel_marker`)**:
+   - No tedious editing of central configuration files.
+   - Simply drop a `sentinel_marker` file into any directory to monitor that tree recursively.
+   - Sentinel automatically discovers all marked roots on startup.
 
-### Feature 2: Decentralized Marker Control [v1.0.1 & v2.0.0]
-- **Supported in:** Version 1.0.1 and Version 2.0.0.
-- **Syntax in v1.0.1:** Single parameter:
-  ```text
-  <max_file_size_mb>
-  ```
-  Example: `5` creates a 5 MB ceiling. Monitored subdirectories inherit this setting.
-- **Syntax in v2.0.0:** Up to three parameters:
-  ```text
-  <max_file_size_mb> [start_tier] [end_tier]
-  ```
-  Example: `5 1 6` (5 MB, Tiers 1 through 6).
-  Example: `50 3 8` (50 MB, Tiers 3 to 8 only — skips 3s/30s high-frequency churn for DB files).
+2. **Retroactive Legacy Backup Onboarding**:
+   - On service startup, Sentinel scans for pre-existing `.bak` revisions on the drive and
+     silently catalogs them. Legacy backups become immediately restoreable via `sentinel restore <ID>`.
 
-### Feature 3: Nested Subfolder Overrides [v2.0.0 Only]
-- **Supported in:** Version 2.0.0 only (v1.0.1 uses parent inheritance).
-- **Description:** If a subfolder contains its own `sentinel_marker`, that subfolder completely
-  overrides the parent policy. Sentinel resolves the most specific rule using longest prefix matching.
+3. **Dynamic File-Size Ceiling (Self-Pruning Vault)**:
+   - The value inside `sentinel_marker` sets the protected size ceiling (e.g. `5` for 5 MB).
+   - If a file (such as a runaway logfile) exceeds this ceiling, it is automatically ejected
+     from the shadow vault. Small scripts, configurations, and source code stay 100% protected.
 
-### Feature 4: Dynamic Size Ceiling & Vault Ejection [v1.0.1 & v2.0.0]
-- **Supported in:** Version 1.0.1 and Version 2.0.0.
-- **Description:** Prevents server disk exhaustion from runaway logs or binary dumps.
-  If a monitored file grows past the configured MB ceiling in `sentinel_marker`:
-  1. The file is excluded from future backups.
-  2. If the file was previously stored in the shadow vault, it is **immediately deleted from the vault**
-     to reclaim storage space in real time.
+4. **Loop-Coupling (Undo-Safe Restore)**:
+   - Restoring a file with `sentinel restore <ID>` overwrites the target file.
+   - The running inotify daemon immediately intercepts this write and seals the overwritten
+     version into a brand-new backup revision. Mistaken restores can instantly be undone!
 
-### Feature 5: Loop-Coupled Undo-Safe Restores [v1.0.1 & v2.0.0]
-- **Supported in:** Version 1.0.1 and Version 2.0.0.
-- **Description:** Running `sentinel restore <ID>` copies the historic `.bak` file over the target file.
-  Because Sentinel's daemon is actively monitoring the directory, this restore write triggers
-  an inotify event that captures the state *before the restore* as a brand-new backup.
-  Restoring the wrong revision can never destroy data; any restore can be reverted immediately.
+5. **Flapping & Cooldown Debounce**:
+   - Rapid consecutive writes are debounced with a 3-second quiet window to prevent spam.
 
-### Feature 6: Retroactive Legacy Backup Onboarding [v1.0.1 & v2.0.0]
-- **Supported in:** Version 1.0.1 and Version 2.0.0.
-- **Description:** When Sentinel boots or displays history, it automatically scans the backup directory
-  for pre-existing `.bak` files from previous runs and catalogs them with assigned IDs.
+6. **Zero Dependencies**:
+   - Pure Python standard library with native `ctypes` bindings directly to `libc.so.6`.
+   - No external tools like `inotifywait` or background Git daemons required.
 
-### Feature 7: Flapping & Cooldown Debounce [v1.0.1 & v2.0.0]
-- **Supported in:** Version 1.0.1 and Version 2.0.0.
-- **Description:** Rapid consecutive write events to the same file are debounced with a 3-second
-  quiet window. An application writing 50 chunks over 2 seconds generates exactly 1 clean backup
-  of the pre-write state rather than 50 corrupt intermediate fragments.
+---
 
-### Feature 8: Decade-Tier Cascade Ring Buffers [v2.0.0 Only]
-- **Supported in:** Version 2.0.0 only (v1.0.1 uses a flat 10-revision FIFO buffer).
-- **Description:** Organizes revisions into geometric decade intervals ($3 \times 10^{(k-1)}$ seconds):
-  - **Tier 1 (3s):** Immediate typos and terminal misclicks (spans 30 seconds).
-  - **Tier 2 (30s):** Rapid script loops and syntax breakages (spans 5 minutes).
-  - **Tier 3 (300s):** 5-minute session checkpoints (spans 50 minutes).
-  - **Tier 4 (3,000s):** 50-minute work shift states (spans 8.3 hours / full workday).
-  - **Tier 5 (30,000s):** 8.3-hour multi-shift states (spans 3.5 days / full weekend).
-  - **Tier 6 (300,000s):** 3.5-day milestones (spans over 35 days / full month).
-  - **Tier 7 (3,000,000s):** ~35-day milestones (spans ~350 days / 1 year).
-  - **Tier 8 (30,000,000s):** ~350-day milestones (spans ~9.5 years).
-  - **Scales up to Tier 128.**
-  Each active tier retains strictly up to 10 copies. If an AI agent loops 50 times in 5 minutes,
-  Tiers 1 and 2 rotate, but Tiers 4, 5, and 6 retain the pristine pre-agent code.
+## Major Architecture Additions in Version 2.0.0
 
-### Feature 9: Interactive Guided Live-Filter Explorer (TUI) [v2.0.0 Only]
-- **Supported in:** Version 2.0.0 only (v1.0.1 prints non-interactive table).
-- **Description:** Launching `sentinel` with no arguments in a terminal opens the guided explorer:
-  - Dynamically reads terminal height (`shutil.get_terminal_size()`) to prevent scroll cutoffs.
-  - **As-You-Type Live Search:** Type queries (`*.py`, `*conf*`, `T4`); match counter updates on
-    every keystroke without pressing Enter. Backspace edits query in-place.
-  - **Dual Mode:** Search by Filename/Path wildcard OR search by File Content (grep inside backups).
-  - Execute restore, diff, view in nano, or change filters directly from the menu prompt.
+### 1. Decade-Tier Cascade Ring Buffers (Up to Tier 128)
+Rather than a single FIFO buffer that risks being pushed out by rapid repetitive loops,
+v2.0.0 introduces a geometric order-of-magnitude cascade ($3 \times 10^{(k-1)}$ seconds):
+- **Tier 1 (3s):** Immediate typos and terminal misclicks (spans 30 seconds).
+- **Tier 2 (30s):** Rapid script loops and syntax breakages (spans 5 minutes).
+- **Tier 3 (300s):** 5-minute session checkpoints (spans 50 minutes).
+- **Tier 4 (3,000s):** 50-minute work shift states (spans 8.3 hours / full workday).
+- **Tier 5 (30,000s):** 8.3-hour multi-shift states (spans 3.5 days / full weekend).
+- **Tier 6 (300,000s):** 3.5-day milestones (spans over 35 days / full month).
+- **Tier 7 (3,000,000s):** ~35-day milestones (spans ~350 days / 1 year).
+- **Tier 8 (30,000,000s):** ~350-day milestones (spans ~9.5 years).
+- **Tiers up to T128:** Geometrically scaling to years and decades for archival deployments.
 
-### Feature 10: Direct Read-Only Nano Viewer [v2.0.0 Only]
-- **Supported in:** Version 2.0.0 only.
-- **Description:** Inspect any historical `.bak` file inside nano (`sentinel nano <ID>`).
-  Opens nano in read-only view mode (`nano -v`) to prevent accidental corruption of backup vaults.
-  Exiting nano (`Ctrl+X`) returns directly to the terminal explorer.
+Each tier maintains its own dedicated ring buffer of 10 revisions. Even if an AI agent runs
+wild in a 5-second loop all night long, Tiers 4, 5, and 6 retain the pristine code from before
+the experiment began.
 
-### Feature 11: Extension-Based File Classification Icons [v2.0.0 Only]
-- **Supported in:** Version 2.0.0 only (v1.0.1 displays plain text paths).
-- **Description:** Categorizes revisions visually in tables:
-  - `🐍` Python (`.py`, `.pyw`)
-  - `🐚` Shell Scripts (`.sh`, `.bash`, `.zsh`)
-  - `📚` Markdown & Documentation (`.md`)
-  - `🗄️` Databases (`.db`, `.sqlite`, `.sql`, `.db-wal`)
-  - `⚙️` Configs (`.json`, `.yaml`, `.toml`, `.conf`, `.ini`, `.env`)
-  - `📋` Logs (`.log`, `.out`, `.err`)
-  - `📝` Plain Text (`.txt`, `.csv`, `.rst`)
+### 2. Hierarchical Range Markers & Nested Subfolder Overrides
+v2.0.0 supports fine-grained tuning per folder via a 3-parameter marker format:
+```text
+<max_size_mb> [start_tier] [end_tier]
+```
+- Example: `5 1 6` (5 MB ceiling, Tiers 1 through 6 active).
+- Example: `50 3 8` (50 MB limit, Tiers 3 to 8 only — skips high-frequency 3s/30s spam for DBs).
+Nested subdirectories automatically override parent policies using longest-prefix matching.
 
-### Feature 12: Self-Healing Catalog Index [v2.0.0 Only]
-- **Supported in:** Version 2.0.0 only.
-- **Description:** On every index load, Sentinel cross-verifies that physical backup files exist
-  on disk. If the auto-pruner purged an old file, ghost records are instantly purged from the catalog.
+### 3. Interactive Guided Live-Filter Explorer (TUI)
+Running `sentinel` with no arguments in a terminal launches the interactive explorer:
+- Automatically detects terminal height (`shutil.get_terminal_size()`) to prevent scroll cutoffs.
+- **As-You-Type Live Search:** Type search terms without pressing Enter; the match counter updates
+  live on every keystroke. Backspace edits query in-place.
+- **Dual Search Modes:** Search by filename wildcard (`*.py`, `*conf*`, `T4`) OR full-text content
+  search across backup files.
+
+### 4. Direct Nano Viewer
+Inspect historic `.bak` files inside nano in read-only mode (`sentinel nano <ID>`).
+Exit nano (`Ctrl+X`) to return directly to the Sentinel explorer.
+
+### 5. Extension-Based File Classification Icons
+Table outputs visually categorize files by extension:
+- `🐍` Python (`.py`, `.pyw`)
+- `🐚` Shell Scripts (`.sh`, `.bash`, `.zsh`)
+- `📚` Markdown & Documentation (`.md`)
+- `🗄️` Databases (`.db`, `.sqlite`, `.sql`, `.db-wal`)
+- `⚙️` Configs (`.json`, `.yaml`, `.toml`, `.conf`, `.ini`, `.env`)
+- `📋` Logs (`.log`, `.out`, `.err`)
+- `📝` Plain Text (`.txt`, `.csv`, `.rst`)
+
+### 6. Self-Healing Catalog Index
+The catalog automatically validates that physical `.bak` files exist on disk during every load.
+If the auto-pruner purged an old revision, ghost records are immediately purged from the index.
 
 ---
 
@@ -231,7 +247,7 @@ sudo sentinel service install
 | `sentinel diff <ID>` | `v1.0+` | Outputs unified diff of revision `<ID>` to stdout. |
 | `sentinel init [MB]` | `v1.0+` | Initializes marker with size limit (defaults to T1..T6 in v2.0+). |
 | `sentinel init [MB] [start] [end]` | `v2.0+` | Initializes marker with custom cascade range (e.g. `10 3 8`). |
-| `sentinel markers` | `v1.0+` | Lists active marked roots with size limits and active tiers. |
+| `sentinel markers` | `v1.0+` | Lists all active marked roots with size limits and active tiers. |
 | `sentinel service install` | `v1.0+` | Installs and enables systemd background service. |
 | `sentinel service restart` | `v1.0+` | Restarts systemd daemon (rescans all markers). |
 | `sentinel service status` | `v1.0+` | Displays systemd service status. |
@@ -247,16 +263,16 @@ sudo sentinel service install
 - **User Daemon:** `~/.local/share/shadow-sentinel/`
 
 ### Custom Storage Redirection (`/etc/shadow-sentinel/config.json`):
-To store backups, vaults, and indices in a custom directory, create:
-`/etc/shadow-sentinel/config.json` (for root) or `~/.config/shadow-sentinel/config.json` (for user):
+To store backups, vaults, and indices in a custom directory (e.g. a separate SSD or network mount),
+create `/etc/shadow-sentinel/config.json` (for root) or `~/.config/shadow-sentinel/config.json` (for user):
 
 ```json
 {
-    "storage_dir": "/custom/path/to/backups"
+    "storage_dir": "/mnt/external_volume/sentinel_vault"
 }
 ```
 
 ### Environment Variable Override:
 ```bash
-export SENTINEL_STORAGE_DIR=/custom/path/to/backups
+export SENTINEL_STORAGE_DIR=/mnt/external_volume/sentinel_vault
 ```
