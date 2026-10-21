@@ -865,7 +865,7 @@ def search_content_matches(pool: list, search_term: str) -> list:
 
 def live_as_you_type_filter(pool: list, search_mode: str) -> list:
     if not HAS_TERMIOS or not sys.stdin.isatty():
-        val = input(f"Search query: ").strip()
+        val = input("> ").strip()
         if search_mode == "content":
             return search_content_matches(pool, val)
         return [item for item in pool if fnmatch.fnmatch(os.path.basename(item["orig_path"]).lower(), val.lower())]
@@ -874,9 +874,10 @@ def live_as_you_type_filter(pool: list, search_mode: str) -> list:
     old_settings = termios.tcgetattr(fd)
     query = ""
     matches = list(pool)
+    mode_label = "Dateiname (*)" if search_mode == "filename" else "Volltext (Inhalt)"
 
-    mode_label = "Filename / Wildcard (*)" if search_mode == "filename" else "File Content (Grep)"
-
+    # Saubere 2-Zeilen-Initialisierung
+    print()
     try:
         tty.setcbreak(fd)
         while True:
@@ -898,25 +899,38 @@ def live_as_you_type_filter(pool: list, search_mode: str) -> list:
                         matches = pool
 
             count_color = CLR_GREEN if len(matches) <= 45 else (CLR_YELLOW if len(matches) <= 200 else CLR_CYAN)
-            sys.stdout.write(f"\r\033[K{CLR_ICE}Search [{CLR_CYAN}{mode_label}{CLR_ICE}]: {CLR_RESET}{query}{CLR_GRAY} -> {count_color}[ {len(matches):,} matches ]{CLR_RESET} {CLR_DIM}(ENTER=View, ESC=Abort){CLR_RESET}")
+
+            # Zeile 1: Statusleiste
+            status_line = f"  {CLR_DIM}[Modus: {mode_label}]{CLR_RESET}  {CLR_ICE}Funde: {count_color}{len(matches):,}{CLR_RESET}  {CLR_GRAY}|{CLR_RESET}  {CLR_DIM}ENTER = Anzeigen  |  ESC = Abbruch{CLR_RESET}"
+            # Zeile 2: Saubere Eingabezeile mit Cursor am Ende
+            input_line  = f"  {CLR_CYAN}>{CLR_RESET} {CLR_ICE}{query}{CLR_RESET}"
+
+            # Cursor hoch, Zeile 1 leeren & schreiben, Zeile 2 leeren & schreiben
+            UP = chr(27) + "[1A"
+            CLEAR = chr(27) + "[K"
+            sys.stdout.write(UP + chr(13) + CLEAR + status_line + chr(10) + chr(13) + CLEAR + input_line)
             sys.stdout.flush()
 
             ch = sys.stdin.read(1)
 
+            # ENTER
             if ch in ("\r", "\n"):
-                sys.stdout.write("\n")
+                sys.stdout.write(chr(10))
                 sys.stdout.flush()
                 return matches
 
+            # BACKSPACE
             elif ch in ("\x7f", "\x08"):
                 if len(query) > 0:
                     query = query[:-1]
 
+            # ESC / STRG+C
             elif ch in ("\x03", "\x1b"):
-                sys.stdout.write("\n")
+                sys.stdout.write(chr(10))
                 sys.stdout.flush()
                 return []
 
+            # Druckbares Zeichen
             elif ord(ch) >= 32:
                 query += ch
 
@@ -961,7 +975,7 @@ def interactive_explorer():
 
     if choice == "2":
         search_mode = "content"
-        print(f"\n{CLR_DIM}Type search term (variable, function, port)...{CLR_RESET}")
+        
     elif choice == "a":
         matches = list(pool)
         render_table(matches, nearest_root)
@@ -969,7 +983,7 @@ def interactive_explorer():
         return
     else:
         search_mode = "filename"
-        print(f"\n{CLR_DIM}Type query (e.g. *.py, app*, T6)... Counter updates live!{CLR_RESET}")
+        
 
     matches = live_as_you_type_filter(pool, search_mode)
 
