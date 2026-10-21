@@ -47,7 +47,8 @@ __license__   = "CC-BY-SA-3.0"
 # Satte Farbpalette: Eis-Weiss (mit Blauanteil), Kraeftiges Leucht-Blau, Reingelb
 CLR_RESET    = "\033[0m"
 CLR_ICE      = "\033[38;5;195m"       # Echtes Eis-Weiss (arちisch-helles Weiss mit Blaustich)
-CLR_LUM_BLUE = "\033[38;5;33m"        # Kraeftiges, leuchtendes Dunkelblau
+CLR_LUM_BLUE = "\033[38;5;33m"
+CLR_CYAN     = "\033[38;5;33m"        # Kraeftiges, leuchtendes Dunkelblau
 CLR_YELLOW   = "\033[38;5;220m"       # Satte gelbe Ziffern
 CLR_GREEN    = "\033[38;5;82m"        # Sattes Gruen
 CLR_GRAY     = "\033[38;5;244m"
