@@ -80,14 +80,17 @@ The microsecond an AI agent or automated script calls `write()` or overwrites a 
 
 Sentinel guarantees that it will never exhaust disk space through a 4-tier automated policy:
 
-1. **Version Cap per File (Max 10 Revisions)**:
-   Only the 10 most recent `.bak` and `.diff` files per target are kept. Older versions are deleted.
+1. **Version Cap per Tier (Max 10 Revisions)**:
+   Each active tier retains strictly its 10 newest `.bak` files. Older versions are pruned.
 
-2. **Version Age Expiration (14 Days)**:
-   Revisions older than 14 days are automatically pruned.
+2. **Tier-Based Retention Schedule (from backup creation date)**:
+   - **Tiers 1 to 4**: Retained for **2 Weeks (14 Days)**.
+   - **Tiers 5 to 9**: Retained for **2 Months (60 Days)**.
+   - **Tier 10 and above**: Retained for **12 Months (365 Days / 1 Year)**.
 
-3. **Log Expiration (30 Days)**:
-   Daily audit diff logs (`diff-YYYYMMDD.log`) are removed after 30 days.
+3. **Diff Twin Lifecycle**:
+   Unified diff files (`.diff`) are 1:1 twins of their respective `.bak` files. A diff file
+   is never expired prematurely and lives exactly as long as its corresponding backup.
 
 4. **Emergency Storage Ceiling (500 MB Cap)**:
    If total backup directory size exceeds 500 MB, an emergency purge trims the oldest backups
@@ -98,8 +101,6 @@ Sentinel guarantees that it will never exhaust disk space through a 4-tier autom
    the `.shadow_vault` to recover disk space instantly.
 
 *The pruning engine runs automatically every 6 hours and immediately upon service startup.*
-
----
 
 ## Installation
 

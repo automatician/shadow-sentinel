@@ -140,6 +140,15 @@ def signal_handler(sig, frame):
 signal.signal(signal.SIGTERM, signal_handler)
 signal.signal(signal.SIGINT, signal_handler)
 
+def get_tier_retention_days(tier_num: int) -> int:
+    """Offizielle Haltedauer: T1-T4 = 14 Tage, T5-T9 = 60 Tage, T10+ = 365 Tage."""
+    if tier_num <= 4:
+        return 14       # 2 Wochen
+    elif tier_num <= 9:
+        return 60       # 2 Monate
+    else:
+        return 365      # 12 Monate (1 Jahr)
+
 def is_sentinel_internal(path: str) -> bool:
     abs_p = os.path.abspath(path)
     if abs_p == BACKUP_DIR or abs_p.startswith(BACKUP_DIR + os.sep):
@@ -403,14 +412,36 @@ def auto_prune_backups():
                 file_groups[key] = []
             file_groups[key].append((fname, fpath, os.path.getmtime(fpath), os.path.getsize(fpath)))
 
+    # Haltedauer: T1-T4 = 2 Wochen (14d), T5-T9 = 2 Monate (60d), T10+ = 12 Monate (365d)
     for key, items in file_groups.items():
+        orig_name, tier_tag, ext_type = key
+        try:
+            tier_num = int(tier_tag.replace("T", ""))
+        except Exception:
+            tier_num = 1
+
+        tier_retention_sec = get_tier_retention_days(tier_num) * 86400
+
         items.sort(key=lambda x: x[2], reverse=True)
         for idx, (fname, fpath, mtime, size) in enumerate(items):
+            should_prune = False
             if idx >= MAX_COPIES_PER_TIER:
+                should_prune = True
+            elif idx > 0 and (now - mtime) > tier_retention_sec:
+                should_prune = True
+
+            if should_prune:
                 try:
                     os.remove(fpath)
                     deleted_count += 1
                     freed_bytes += size
+                    # ZWILLINGS-REGEL: .diff wird nur geloescht, wenn auch das .bak geloescht wird!
+                    diff_twin = fpath.replace(".bak", ".diff")
+                    if os.path.exists(diff_twin):
+                        try:
+                            os.remove(diff_twin)
+                        except Exception:
+                            pass
                 except Exception:
                     pass
 
