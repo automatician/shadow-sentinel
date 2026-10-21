@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "shadow-sentinel"
+version = "2.0.0"
+authors = [
+  { name="automatician", email="235166879+automatician@users.noreply.github.com" },
+]
+description = "Autonomous OS-level revision & backup guard with interactive ASCII explorer and nano viewer"
+readme = "README.md"
+license = "CC-BY-SA-3.0"
+requires-python = ">=3.9"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: POSIX :: Linux",
+    "Topic :: System :: Archiving :: Backup",
+    "Topic :: System :: Monitoring",
+    "Topic :: Utilities",
+]
+dependencies = []
+
+[project.urls]
+"Homepage" = "https://github.com/automatician/shadow-sentinel"
+"Bug Tracker" = "https://github.com/automatician/shadow-sentinel/issues"
+
+[project.scripts]
+sentinel = "shadow_sentinel.core:cli_main"

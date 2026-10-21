@@ -1,0 +1,178 @@
+# Shadow Sentinel
+
+[![PyPI Version](https://img.shields.io/pypi/v/shadow-sentinel.svg)](https://pypi.org/project/shadow-sentinel/)
+[![Downloads](https://static.pepy.tech/badge/shadow-sentinel)](https://pepy.tech/project/shadow-sentinel)
+[![Python Versions](https://img.shields.io/pypi/pyversions/shadow-sentinel.svg)](https://pypi.org/project/shadow-sentinel/)
+[![License](https://img.shields.io/badge/License-CC_BY--SA_3.0-blue.svg)](LICENSE)
+
+**Autonomous OS-Level Revision & Backup Daemon with Decentralized Marker Control and Loop-Coupling.**
+
+Shadow Sentinel monitors directory trees in real-time via the Linux kernel (`inotify`), captures
+atomic `.bak` revisions and unified diffs (`.diff`) on every file modification, and provides
+instant 1-command restores with loop-coupling safety.
+
+---
+
+## The AI Agent Dilemma: Why Shadow Sentinel Was Born
+
+Autonomous AI coding agents, Copilots, and LLM automation pipelines are transforming development.
+However, they introduce a terrifying new failure mode: **silent, automated destruction of code**.
+
+### The LLM Code Truncation & Hallucination Trap
+Large Language Models have a notorious habit of code "laziness" and structural truncation:
+- Replacing hundreds of lines of critical logic with:
+  `// ... rest of implementation remains unchanged ...`
+- Overwriting multi-thousand-line configuration files with incomplete, summarized snippets.
+- Truncating files or writing empty 0-byte files when token limits, parser errors, or API timeouts occur.
+- Hallucinating breaking parameter changes across multiple scripts simultaneously.
+
+### The Nightmare Scenario: Immediate vs. Delayed Detection
+- **If you catch it immediately:** You still waste stressful hours digging through editor undo buffers,
+  stash queues, or attempting to manually reconstruct what the model wiped out.
+- **If you catch it hours or days later:** The damage is catastrophic. The agent continued running,
+  git working trees are dirty, commits were never made, and the original, working code is gone forever.
+  Regular backups taken once a day or once a week cannot save intraday edits.
+
+### The Sentinel Safety Net
+Shadow Sentinel runs silently in the background directly under the agent's feet at the OS level.
+The microsecond an AI agent or automated script calls `write()` or overwrites a file:
+1. Sentinel's kernel-level inotify intercept catches the write before the file closes.
+2. The previous working version is sealed into an atomic, timestamped `.bak` revision.
+3. A human-readable unified `.diff` is generated showing exactly what the agent altered or removed.
+4. If an agent ruins a file, you restore it with a single command: `sentinel restore <ID>`.
+
+---
+
+## Key Features
+
+1. **Decentralized Marker Control (`sentinel_marker`)**:
+   - No tedious editing of central configuration files.
+   - Simply run `sentinel init [MB]` in any directory or place a `sentinel_marker` file.
+   - Sentinel automatically discovers all marked roots on startup and monitors them and all
+     nested subdirectories recursively.
+
+2. **Retroactive Legacy Backup Onboarding**:
+   - On service startup, Sentinel scans for pre-existing `.bak` revisions on the drive and
+     silently indexes them into its catalog. Legacy backups become immediately restoreable via
+     `sentinel restore <ID>`.
+   - Backup storage directories are isolated to prevent recursive self-monitoring loops.
+
+3. **Dynamic File-Size Ceiling (Self-Pruning Vault)**:
+   - The value inside `sentinel_marker` sets the protected size ceiling (e.g. `5` for 5 MB).
+   - If a file (such as a runaway logfile) exceeds this ceiling, it is automatically ejected
+     from the shadow vault. Small scripts, configurations, and source code stay 100% protected.
+
+4. **Loop-Coupling (Undo-Safe Restore)**:
+   - Restoring a file with `sentinel restore <ID>` overwrites the target file.
+   - The running inotify daemon immediately intercepts this write and seals the overwritten
+     version into a brand-new backup revision. Mistaken restores can instantly be undone!
+
+5. **Flapping & Cooldown Debounce**:
+   - Rapid consecutive writes are debounced with a 3-second quiet window to prevent spam.
+
+6. **Zero Dependencies**:
+   - Pure Python standard library with native `ctypes` bindings directly to `libc.so.6`.
+   - No external tools like `inotifywait` or background Git daemons required.
+
+---
+
+## Automated Disk Sanitation & Retention Doctrine
+
+Sentinel guarantees that it will never exhaust disk space through a 4-tier automated policy:
+
+1. **Version Cap per File (Max 10 Revisions)**:
+   Only the 10 most recent `.bak` and `.diff` files per target are kept. Older versions are deleted.
+
+2. **Version Age Expiration (14 Days)**:
+   Revisions older than 14 days are automatically pruned.
+
+3. **Log Expiration (30 Days)**:
+   Daily audit diff logs (`diff-YYYYMMDD.log`) are removed after 30 days.
+
+4. **Emergency Storage Ceiling (500 MB Cap)**:
+   If total backup directory size exceeds 500 MB, an emergency purge trims the oldest backups
+   across all files until total disk usage drops back down to 80% (400 MB).
+
+5. **Active Vault Ejection**:
+   Files that grow beyond the MB ceiling in `sentinel_marker` are immediately removed from
+   the `.shadow_vault` to recover disk space instantly.
+
+*The pruning engine runs automatically every 6 hours and immediately upon service startup.*
+
+---
+
+## Installation
+
+```bash
+pip install shadow-sentinel
+```
+
+Set up and start the systemd background service in one step:
+```bash
+sudo sentinel service install
+```
+
+---
+
+## Usage
+
+### Protect a Directory
+Navigate to the directory and run:
+```bash
+sentinel init 5
+```
+*(Creates `sentinel_marker` with a 5 MB file size limit).*
+
+### List Backups
+Simply type in any terminal:
+```bash
+sentinel
+```
+Automatically detects the nearest marker upwards and lists all protected revisions.
+Optionally pass a search filter:
+```bash
+sentinel .py
+```
+
+### Restore a File
+```bash
+sentinel restore 3
+```
+
+### View Unified Diff
+```bash
+sentinel diff 3
+```
+
+### List All Active Markers on System
+```bash
+sentinel markers
+```
+
+### Full Interactive Manual
+```bash
+sentinel help
+```
+
+---
+
+## Storage & Configuration
+
+### Linux FHS Standard Paths:
+- **Root Daemon:** `/var/lib/shadow-sentinel/`
+- **User Daemon:** `~/.local/share/shadow-sentinel/`
+
+### Custom Storage Redirection (`/etc/shadow-sentinel/config.json`):
+To store backups, vaults, and indices in a custom directory, create:
+`/etc/shadow-sentinel/config.json` (for root) or `~/.config/shadow-sentinel/config.json` (for user):
+
+```json
+{
+    "storage_dir": "/custom/path/to/backups"
+}
+```
+
+### Environment Variable Override:
+```bash
+export SENTINEL_STORAGE_DIR=/custom/path/to/backups
+```

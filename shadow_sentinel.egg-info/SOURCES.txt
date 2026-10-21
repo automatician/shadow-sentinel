@@ -1,0 +1,10 @@
+LICENSE
+README.md
+pyproject.toml
+shadow_sentinel/__init__.py
+shadow_sentinel/core.py
+shadow_sentinel.egg-info/PKG-INFO
+shadow_sentinel.egg-info/SOURCES.txt
+shadow_sentinel.egg-info/dependency_links.txt
+shadow_sentinel.egg-info/entry_points.txt
+shadow_sentinel.egg-info/top_level.txt
