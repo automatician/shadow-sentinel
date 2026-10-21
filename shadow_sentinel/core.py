@@ -44,15 +44,13 @@ __author__    = "automatician (Torsten Frieser)"
 __copyright__ = "Copyright (c) 2026 automatician (Torsten Frieser), Germany / Saxony / Zittau"
 __license__   = "CC-BY-SA-3.0"
 
-# Farbschema: Eis-Weiss und Cyan-Blau
-CLR_RESET   = "\033[0m"
-CLR_ICE     = "\033[1;37m"
-CLR_CYAN    = "\033[38;5;81m"
-CLR_BLUE    = "\033[38;5;75m"
-CLR_GRAY    = "\033[38;5;242m"
-CLR_GREEN   = "\033[38;5;120m"
-CLR_YELLOW  = "\033[38;5;221m"
-CLR_DIM     = "\033[2m"
+# Satte Farbpalette: Eis-Weiss (mit Blauanteil), Kraeftiges Leucht-Blau, Reingelb
+CLR_RESET    = "\033[0m"
+CLR_ICE      = "\033[38;5;195m"       # Echtes Eis-Weiss (arちisch-helles Weiss mit Blaustich)
+CLR_LUM_BLUE = "\033[38;5;33m"        # Kraeftiges, leuchtendes Dunkelblau
+CLR_YELLOW   = "\033[38;5;220m"       # Satte gelbe Ziffern
+CLR_GREEN    = "\033[38;5;82m"        # Sattes Gruen
+CLR_GRAY     = "\033[38;5;244m"
 
 def get_storage_dirs():
     env_dir = os.getenv("SENTINEL_STORAGE_DIR")
@@ -901,9 +899,9 @@ def live_as_you_type_filter(pool: list, search_mode: str) -> list:
             count_color = CLR_GREEN if len(matches) <= 45 else (CLR_YELLOW if len(matches) <= 200 else CLR_CYAN)
 
             # Zeile 1: Statusleiste
-            status_line = f"  {CLR_DIM}[Modus: {mode_label}]{CLR_RESET}  {CLR_ICE}Funde: {count_color}{len(matches):,}{CLR_RESET}  {CLR_GRAY}|{CLR_RESET}  {CLR_DIM}ENTER = Anzeigen  |  ESC = Abbruch{CLR_RESET}"
+            status_line = f"  {CLR_ICE}[Modus: {mode_label}]{CLR_RESET}  {CLR_ICE}Funde: {count_color}{len(matches):,}{CLR_RESET}  {CLR_ICE}|{CLR_RESET}  {CLR_ICE}ENTER = Anzeigen  |  ESC = Abbruch{CLR_RESET}"
             # Zeile 2: Saubere Eingabezeile mit Cursor am Ende
-            input_line  = f"  {CLR_CYAN}>{CLR_RESET} {CLR_ICE}{query}{CLR_RESET}"
+            input_line  = f"  {CLR_LUM_BLUE}>{CLR_RESET} {CLR_ICE}{query}{CLR_RESET}"
 
             # Cursor hoch, Zeile 1 leeren & schreiben, Zeile 2 leeren & schreiben
             UP = chr(27) + "[1A"
@@ -942,31 +940,31 @@ def interactive_explorer():
     nearest_root, marker_path = find_nearest_marker(cwd)
     idx = load_index()
 
-    term_height = shutil.get_terminal_size((80, 24)).lines
-    max_fit = max(8, term_height - 12)
+    div = f"{CLR_ICE}{'─' * 83}{CLR_RESET}"
 
-    # Völlig neutrale, elegante Trennlinie ohne Slogans
-    print(f"\n{CLR_GRAY}{'─' * 80}{CLR_RESET}")
-    print(f"{CLR_CYAN}SHADOW SENTINEL (Linux CLI) – v{__version__}{CLR_RESET}")
-    print(f"{CLR_ICE}Interactive Revision Explorer {CLR_DIM}[Live-Filter | Backspace = Edit | ENTER = View]{CLR_RESET}")
-    print()
+    # Minimalistischer, edler Header in Eis-Weiss & Leucht-Blau
+    print(f"\n{div}")
+    print(f" {CLR_LUM_BLUE}Shadow Sentinel v{__version__}{CLR_RESET}")
+    print(f"{div}")
+
     if nearest_root:
         size_mb, start_t, end_t = parse_marker_file(marker_path)
-        print(f"  {CLR_ICE}Context:{CLR_RESET}   {CLR_CYAN}{cwd}{CLR_RESET}")
-        print(f"  {CLR_ICE}Root:{CLR_RESET}      {nearest_root} {CLR_DIM}[Limit: {size_mb} MB | Tiers: T{start_t}..T{end_t}]{CLR_RESET}")
+        print(f"  {CLR_ICE}Context:{CLR_RESET}   {CLR_LUM_BLUE}{cwd}{CLR_RESET}")
+        print(f"  {CLR_ICE}Root:{CLR_RESET}      {nearest_root} {CLR_ICE}[Limit: {size_mb} MB | Tiers: T{start_t}..T{end_t}]{CLR_RESET}")
         pool = [item for item in idx if item["orig_path"].startswith(nearest_root)]
     else:
-        print(f"  {CLR_ICE}Context:{CLR_RESET}   {CLR_CYAN}{cwd}{CLR_RESET} {CLR_DIM}(Global Catalog){CLR_RESET}")
+        print(f"  {CLR_ICE}Context:{CLR_RESET}   {CLR_LUM_BLUE}{cwd}{CLR_RESET} {CLR_ICE}(Global Catalog){CLR_RESET}")
         pool = idx
 
-    print(f"  {CLR_ICE}Catalog:{CLR_RESET}   {CLR_GREEN}{len(pool):,} backups tracked{CLR_RESET} {CLR_DIM}(Height: {term_height} lines, ~{max_fit} fit comfortably){CLR_RESET}")
-    print(f"{CLR_GRAY}{'─' * 80}{CLR_RESET}")
+    print(f"  {CLR_ICE}Catalog:{CLR_RESET}   {CLR_GREEN}{len(pool):,} backups tracked{CLR_RESET}")
+    print(f"{div}")
 
-    print(f"\n{CLR_ICE}Select Search Mode:{CLR_RESET}")
-    print(f"  {CLR_CYAN}[1]{CLR_RESET} Search by {CLR_ICE}Filename / Path / Tier{CLR_RESET} (Wildcards *.py, *conf*, T4)")
-    print(f"  {CLR_CYAN}[2]{CLR_RESET} Search by {CLR_ICE}File Content{CLR_RESET} (Full-text in backups)")
-    print(f"  {CLR_CYAN}[A]{CLR_RESET} Display all {len(pool):,} entries")
-    print(f"  {CLR_CYAN}[Q]{CLR_RESET} Quit")
+    # Aufgeraeumte Auswahl ohne ueberfluessige Worte
+    print(f"\n{CLR_ICE}Select:{CLR_RESET}")
+    print(f"  {CLR_YELLOW}[1]{CLR_RESET} {CLR_ICE}Search by Filename / Path / Tier (Wildcards *.py, *conf*, T4){CLR_RESET}")
+    print(f"  {CLR_YELLOW}[2]{CLR_RESET} {CLR_ICE}Search by File Content (Full-text in backups){CLR_RESET}")
+    print(f"  {CLR_YELLOW}[A]{CLR_RESET} {CLR_ICE}Display all {len(pool):,} entries{CLR_RESET}")
+    print(f"  {CLR_YELLOW}[Q]{CLR_RESET} {CLR_ICE}Quit{CLR_RESET}")
 
     choice = input(f"\n{CLR_ICE}Choice [1/2/A/Q]: {CLR_RESET}").strip().lower()
 
@@ -975,7 +973,6 @@ def interactive_explorer():
 
     if choice == "2":
         search_mode = "content"
-        
     elif choice == "a":
         matches = list(pool)
         render_table(matches, nearest_root)
@@ -983,7 +980,6 @@ def interactive_explorer():
         return
     else:
         search_mode = "filename"
-        
 
     matches = live_as_you_type_filter(pool, search_mode)
 
