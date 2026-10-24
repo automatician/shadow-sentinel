@@ -21,6 +21,9 @@ classifiers = [
 ]
 dependencies = []
 
+[tool.setuptools.packages.find]
+include = ["shadow_sentinel*"]
+
 [project.urls]
 "Homepage" = "https://github.com/automatician/shadow-sentinel"
 "Bug Tracker" = "https://github.com/automatician/shadow-sentinel/issues"
