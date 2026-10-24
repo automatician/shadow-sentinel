@@ -851,7 +851,9 @@ def check_for_updates():
         with urllib.request.urlopen(req, timeout=1.0) as resp:
             data = json.loads(resp.read().decode())
             latest_v = data.get("info", {}).get("version")
-            if latest_v and latest_v != __version__:
+            def parse_v(v):
+                return [int(x) for x in re.findall(r'\d+', v)]
+            if latest_v and parse_v(latest_v) > parse_v(__version__):
                 notes = fetch_release_notes(latest_v)
                 print(f"\n{CLR_YELLOW}───────────────────────────────────────────────────────────────────────────────────{CLR_RESET}")
                 print(f"  {CLR_ICE}[UPDATE AVAILABLE]{CLR_RESET} New version on PyPI: {CLR_CYAN}v{__version__}{CLR_RESET} ➔ {CLR_GREEN}v{latest_v}{CLR_RESET}")
