@@ -1,0 +1,12 @@
+{
+  "version": "2.0.1",
+  "date": "2026-10-21",
+  "title": "Service Lifecycle, Auto-Migration & Terminal Ergonomics",
+  "highlights": [
+    "Automatic zombie process reaper: terminates old background daemons before start",
+    "Marker migration assistant: upgrades legacy 1-param markers to 3-param format [MB 1 4]",
+    "Fixed color palette name alignment and clean 2-line input prompt",
+    "Live PyPI update notifier and 'sentinel whatsnew' console inspector"
+  ],
+  "upgrade_command": "pip install --upgrade shadow-sentinel && sentinel service restart"
+}

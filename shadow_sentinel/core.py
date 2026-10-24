@@ -13,8 +13,8 @@
 # ==============================================================================
 
 """
-Shadow Sentinel Core Engine v2.0.0
-Interactive Guided ASCII Explorer with Nano Viewer & Decade-Tier Cascade
+Shadow Sentinel Core Engine v2.0.1
+Interactive Guided ASCII Explorer with Nano Viewer, Decade Cascade & Marker Migration
 """
 
 import os
@@ -31,6 +31,7 @@ import signal
 import re
 import fnmatch
 import subprocess
+import urllib.request
 
 try:
     import termios
@@ -39,19 +40,20 @@ try:
 except ImportError:
     HAS_TERMIOS = False
 
-__version__   = "2.0.0"
+__version__   = "2.0.1"
 __author__    = "automatician (Torsten Frieser)"
 __copyright__ = "Copyright (c) 2026 automatician (Torsten Frieser), Germany / Saxony / Zittau"
 __license__   = "CC-BY-SA-3.0"
 
 # Satte Farbpalette: Eis-Weiss (mit Blauanteil), Kraeftiges Leucht-Blau, Reingelb
 CLR_RESET    = "\033[0m"
-CLR_ICE      = "\033[38;5;195m"       # Echtes Eis-Weiss (arちisch-helles Weiss mit Blaustich)
-CLR_LUM_BLUE = "\033[38;5;33m"
-CLR_CYAN     = "\033[38;5;33m"        # Kraeftiges, leuchtendes Dunkelblau
+CLR_ICE      = "\033[38;5;195m"       # Echtes Eis-Weiss (arktisch-helles Weiss)
+CLR_LUM_BLUE = "\033[38;5;33m"        # Kraeftiges, leuchtendes Dunkelblau
+CLR_CYAN     = "\033[38;5;33m"        # Alias fuer Leucht-Blau
 CLR_YELLOW   = "\033[38;5;220m"       # Satte gelbe Ziffern
 CLR_GREEN    = "\033[38;5;82m"        # Sattes Gruen
 CLR_GRAY     = "\033[38;5;244m"
+CLR_DIM      = "\033[2m"
 
 def get_storage_dirs():
     env_dir = os.getenv("SENTINEL_STORAGE_DIR")
@@ -86,7 +88,7 @@ CENTRAL_BASE, BACKUP_DIR, VAULT_DIR, INDEX_FILE = get_storage_dirs()
 MAX_COPIES_PER_TIER  = 10
 MAX_ALLOWED_TIERS    = 128
 DEFAULT_START_TIER   = 1
-DEFAULT_END_TIER     = 6
+DEFAULT_END_TIER     = 4       # Standard T1..T4
 DEFAULT_MAX_FILE_MB  = 5
 MAX_LOG_AGE_DAYS     = 30
 MAX_BACKUP_DIR_MB    = 500
@@ -110,8 +112,8 @@ EVENT_MASK = IN_CLOSE_WRITE | IN_DELETE | IN_MOVED_FROM | IN_MOVED_TO | IN_CREAT
 running = True
 last_prune_ts = 0
 pending_writes = {}
-marker_targets = {}
-tier_last_snapshot = {}
+marker_targets = {}  # {abs_dir: (max_size_bytes, start_tier, end_tier)}
+tier_last_snapshot = {}  # {(abs_path, tier_num): timestamp}
 
 def get_file_type_icon(filename: str) -> str:
     fname = filename.lower()
@@ -139,15 +141,6 @@ def signal_handler(sig, frame):
 signal.signal(signal.SIGTERM, signal_handler)
 signal.signal(signal.SIGINT, signal_handler)
 
-def get_tier_retention_days(tier_num: int) -> int:
-    """Offizielle Haltedauer: T1-T4 = 14 Tage, T5-T9 = 60 Tage, T10+ = 365 Tage."""
-    if tier_num <= 4:
-        return 14       # 2 Wochen
-    elif tier_num <= 9:
-        return 60       # 2 Monate
-    else:
-        return 365      # 12 Monate (1 Jahr)
-
 def is_sentinel_internal(path: str) -> bool:
     abs_p = os.path.abspath(path)
     if abs_p == BACKUP_DIR or abs_p.startswith(BACKUP_DIR + os.sep):
@@ -164,6 +157,14 @@ def get_tier_interval(tier_k: int) -> int:
     if tier_k > MAX_ALLOWED_TIERS:
         tier_k = MAX_ALLOWED_TIERS
     return 3 * (10 ** (tier_k - 1))
+
+def get_tier_retention_days(tier_num: int) -> int:
+    if tier_num <= 4:
+        return 14       # 2 Wochen (T1-T4)
+    elif tier_num <= 9:
+        return 60       # 2 Monate (T5-T9)
+    else:
+        return 365      # 12 Monate (T10+)
 
 def parse_marker_file(mpath: str) -> tuple:
     size_mb = DEFAULT_MAX_FILE_MB
@@ -203,6 +204,46 @@ def parse_marker_file(mpath: str) -> tuple:
         pass
     return size_mb, start_tier, end_tier
 
+def check_and_upgrade_markers():
+    """Findet alte 1-Parameter Marker und bietet Upgrade auf [MB 1 4] an."""
+    m_list = []
+    cmd = ["find", "/", "-name", "sentinel_marker", "-o", "-name", ".sentinel_marker"]
+    try:
+        res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+        m_list = [l.strip() for l in res.stdout.splitlines() if l.strip()]
+    except Exception:
+        pass
+
+    for mp in m_list:
+        if is_sentinel_internal(mp) or not os.path.isfile(mp):
+            continue
+        try:
+            with open(mp, "r", encoding="utf-8") as f:
+                raw = f.read().strip()
+            parts = re.split(r"[\s,]+", raw) if raw else []
+            if len(parts) < 3:
+                # Altes Format erkannt!
+                cur_mb = parts[0] if len(parts) >= 1 and parts[0] else str(DEFAULT_MAX_FILE_MB)
+                print(f"\n{CLR_YELLOW}[MIGRATION HINWEIS]{CLR_RESET} Marker in {CLR_ICE}{mp}{CLR_RESET} hat altes Format ({raw or 'leer'}).")
+                ans = input(f"Auf v2.x Standard '{cur_mb} 1 4' aktualisieren? [Y/n]: ").strip().lower()
+                if ans in ("", "y", "ja", "yes"):
+                    with open(mp, "w", encoding="utf-8") as f:
+                        f.write(f"{cur_mb} 1 4\n")
+                    print(f"{CLR_GREEN}✓ Marker aktualisiert:{CLR_RESET} {cur_mb} MB | Tiers T1..T4")
+        except Exception:
+            pass
+
+def resolve_bak_path(bak_file: str) -> str:
+    candidates = [
+        os.path.join(BACKUP_DIR, bak_file),
+        os.path.join("/opt/admin-agent/backups", bak_file),
+        os.path.join(CENTRAL_BASE, "backups", bak_file)
+    ]
+    for p in candidates:
+        if os.path.exists(p):
+            return p
+    return candidates[0]
+
 def load_index() -> list:
     entries = []
     if os.path.exists(INDEX_FILE):
@@ -212,10 +253,20 @@ def load_index() -> list:
         except Exception:
             entries = []
 
+    # Self-Healing: Geister-Eintraege physisch geloeschter Dateien entfernen
+    valid_entries = []
+    modified = False
+    for item in entries:
+        bp = resolve_bak_path(item.get("bak_file", ""))
+        if os.path.exists(bp):
+            valid_entries.append(item)
+        else:
+            modified = True
+    entries = valid_entries
+
     existing_baks = {item.get("bak_file") for item in entries}
     pattern = re.compile(r"^(.*?)\.(T\d+)\.(\d{8}_\d{6})\.(bak|deleted\.bak)$")
     legacy_pattern = re.compile(r"^(.*?)\.(\d{8}_\d{6})\.(bak|deleted\.bak)$")
-    modified = False
 
     if os.path.exists(BACKUP_DIR):
         for fname in sorted(os.listdir(BACKUP_DIR)):
@@ -262,16 +313,6 @@ def load_index() -> list:
             })
             existing_baks.add(fname)
             modified = True
-
-        # Self-Healing: Entferne alle Eintraege, deren physische Datei nicht mehr existiert
-    valid_entries = []
-    for item in entries:
-        bp = resolve_bak_path(item.get("bak_file", ""))
-        if os.path.exists(bp):
-            valid_entries.append(item)
-        else:
-            modified = True
-    entries = valid_entries
 
     if modified or not os.path.exists(INDEX_FILE):
         entries.sort(key=lambda x: x.get("timestamp", ""))
@@ -411,7 +452,7 @@ def auto_prune_backups():
                 file_groups[key] = []
             file_groups[key].append((fname, fpath, os.path.getmtime(fpath), os.path.getsize(fpath)))
 
-    # Haltedauer: T1-T4 = 2 Wochen (14d), T5-T9 = 2 Monate (60d), T10+ = 12 Monate (365d)
+    # Haltedauer: T1-T4 = 14d, T5-T9 = 60d, T10+ = 365d
     for key, items in file_groups.items():
         orig_name, tier_tag, ext_type = key
         try:
@@ -434,7 +475,6 @@ def auto_prune_backups():
                     os.remove(fpath)
                     deleted_count += 1
                     freed_bytes += size
-                    # ZWILLINGS-REGEL: .diff wird nur geloescht, wenn auch das .bak geloescht wird!
                     diff_twin = fpath.replace(".bak", ".diff")
                     if os.path.exists(diff_twin):
                         try:
@@ -444,6 +484,7 @@ def auto_prune_backups():
                 except Exception:
                     pass
 
+    # 500 MB Notbremse
     total_size = sum(os.path.getsize(os.path.join(BACKUP_DIR, f)) for f in os.listdir(BACKUP_DIR) if os.path.isfile(os.path.join(BACKUP_DIR, f)))
     max_bytes = MAX_BACKUP_DIR_MB * 1024 * 1024
 
@@ -599,18 +640,6 @@ def handle_file_deleted(abs_path: str):
         os.remove(vault_path)
         print(f"[DELETION] {abs_path} -> {del_bak}")
 
-def resolve_bak_path(bak_file: str) -> str:
-    """Findet die Backup-Datei verlässlich über alle bekannten Pfade."""
-    candidates = [
-        os.path.join(BACKUP_DIR, bak_file),
-        os.path.join("/opt/admin-agent/backups", bak_file),
-        os.path.join(CENTRAL_BASE, "backups", bak_file)
-    ]
-    for p in candidates:
-        if os.path.exists(p):
-            return p
-    return candidates[0]
-
 def open_in_nano(target_path: str):
     if not os.path.exists(target_path):
         print(f"[ERROR] File does not exist: {target_path}")
@@ -728,7 +757,18 @@ def run_daemon():
 
 def manage_service(action: str):
     service_file = "/etc/systemd/system/shadow-sentinel.service"
-    py_exec = sys.executable
+    py_exec = shutil.which("python3") or sys.executable
+
+    # ZOMBIE-KILLER: Beendet vor jeder Dienst-Aktion alle alten Geister-Prozesse
+    if action in ("install", "restart", "start"):
+        try:
+            subprocess.run(["pkill", "-9", "-f", "mre_filesystem_sentinel.py"], stderr=subprocess.DEVNULL)
+            subprocess.run(["pkill", "-9", "-f", "test_user_env"], stderr=subprocess.DEVNULL)
+            subprocess.run(["pkill", "-9", "-f", "shadow_sentinel.core"], stderr=subprocess.DEVNULL)
+            subprocess.run(["systemctl", "stop", "mre_filesystem_sentinel"], stderr=subprocess.DEVNULL)
+            subprocess.run(["systemctl", "disable", "mre_filesystem_sentinel"], stderr=subprocess.DEVNULL)
+        except Exception:
+            pass
 
     if action == "install":
         content = f"""[Unit]
@@ -751,18 +791,79 @@ WantedBy=multi-user.target
                 f.write(content)
             subprocess.run(["systemctl", "daemon-reload"], check=True)
             subprocess.run(["systemctl", "enable", "--now", "shadow-sentinel"], check=True)
-            print(f"[SERVICE] Installed and started: {service_file}")
+            print(f"[SERVICE] Installed and started cleanly: {service_file}")
         except Exception as e:
             print(f"[ERROR] Service install failed: {e}")
 
     elif action in ("status", "restart", "stop", "start"):
-        subprocess.run(["systemctl", action, "shadow-sentinel"])
+        if action == "restart":
+            manage_service("install")
+        else:
+            subprocess.run(["systemctl", action, "shadow-sentinel"])
 
 def print_version():
     print(f"Shadow Sentinel v{__version__}")
     print(f"{__copyright__}")
     print(f"License: {__license__} (Creative Commons Attribution-ShareAlike 3.0 Germany)")
     print("Project: https://github.com/automatician/shadow-sentinel")
+
+def fetch_release_notes(ver: str) -> dict:
+    local_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "release_notes", f"v{ver}.json")
+    if os.path.exists(local_path):
+        try:
+            with open(local_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+
+    url = f"https://raw.githubusercontent.com/automatician/shadow-sentinel/main/release_notes/v{ver}.json"
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "shadow-sentinel-cli"})
+        with urllib.request.urlopen(req, timeout=1.5) as resp:
+            return json.loads(resp.read().decode())
+    except Exception:
+        return {}
+
+def show_whats_new(target_version=None):
+    ver = target_version or __version__
+    data = fetch_release_notes(ver)
+
+    div = f"{CLR_ICE}{'─' * 83}{CLR_RESET}"
+    print(f"\n{div}")
+    print(f" {CLR_LUM_BLUE}Shadow Sentinel v{ver}{CLR_RESET}  {CLR_DIM}Release Notes & Patch Highlights{CLR_RESET}")
+    print(f"{div}")
+
+    if not data:
+        print(f"  {CLR_YELLOW}No patch notes found for v{ver}. Visit: https://github.com/automatician/shadow-sentinel{CLR_RESET}")
+    else:
+        print(f"  {CLR_ICE}Title:{CLR_RESET}        {CLR_CYAN}{data.get('title', 'Maintenance Release')}{CLR_RESET}")
+        print(f"  {CLR_ICE}Date:{CLR_RESET}         {CLR_DIM}{data.get('date', 'Recent')}{CLR_RESET}")
+        print(f"\n  {CLR_ICE}What was fixed & improved:{CLR_RESET}")
+        for item in data.get("highlights", []):
+            print(f"    {CLR_GREEN}•{CLR_RESET} {item}")
+        print(f"\n  {CLR_ICE}Upgrade:{CLR_RESET}      {CLR_CYAN}{data.get('upgrade_command', 'pip install --upgrade shadow-sentinel')}{CLR_RESET}")
+    print(f"{div}\n")
+
+def check_for_updates():
+    try:
+        url = "https://pypi.org/pypi/shadow-sentinel/json"
+        req = urllib.request.Request(url, headers={"User-Agent": "shadow-sentinel-cli"})
+        with urllib.request.urlopen(req, timeout=1.0) as resp:
+            data = json.loads(resp.read().decode())
+            latest_v = data.get("info", {}).get("version")
+            if latest_v and latest_v != __version__:
+                notes = fetch_release_notes(latest_v)
+                print(f"\n{CLR_YELLOW}───────────────────────────────────────────────────────────────────────────────────{CLR_RESET}")
+                print(f"  {CLR_ICE}[UPDATE AVAILABLE]{CLR_RESET} New version on PyPI: {CLR_CYAN}v{__version__}{CLR_RESET} ➔ {CLR_GREEN}v{latest_v}{CLR_RESET}")
+                if notes and "highlights" in notes:
+                    print(f"  {CLR_ICE}Patch highlights in v{latest_v}:{CLR_RESET}")
+                    for h in notes.get("highlights", [])[:3]:
+                        print(f"    {CLR_GREEN}•{CLR_RESET} {h}")
+                print(f"  {CLR_ICE}Upgrade command:{CLR_RESET}   {CLR_CYAN}pip install --upgrade shadow-sentinel && sentinel service restart{CLR_RESET}")
+                print(f"  {CLR_DIM}Run 'sentinel whatsnew' for full changelog details.{CLR_RESET}")
+                print(f"{CLR_YELLOW}───────────────────────────────────────────────────────────────────────────────────{CLR_RESET}\n")
+    except Exception:
+        pass
 
 def show_help():
     manual = f"""
@@ -782,7 +883,7 @@ DECADE-TIER CASCADE ARCHITECTURE
     - T1 (3s):       Immediate typos and script interruptions.
     - T2 (30s):      Micro crashes and loop bugs.
     - T3 (300s):     5-minute session checkpoints.
-    - T4 (3000s):    50-minute work shift states.
+    - T4 (3000s):    50-minute work shift states (full 8.3h workday span).
     - T5 (30000s):   8.3-hour multi-shift / weekend anchors.
     - T6 (300000s):  3.5-day milestones covering over a month (35+ days).
     - Up to T128:    Configurable decades scaling up to years and decades.
@@ -790,8 +891,8 @@ DECADE-TIER CASCADE ARCHITECTURE
 MARKER HIERARCHY & RANGE SYNTAX
   Drop 'sentinel_marker' in any root directory or nested subfolder:
     Format:  <max_size_mb> [start_tier] [end_tier]
-    Example: 5 1 6   (5 MB limit, Tiers 1 through 6 active)
-    Example: 10 3 8  (10 MB limit, Tiers 3 through 8 only - skips rapid 3s/30s spam)
+    Example: 5 1 4   (5 MB limit, Tiers 1 through 4 active)
+    Example: 50 3 8  (50 MB limit, Tiers 3 through 8 only - skips rapid 3s/30s spam)
   Nested subfolders automatically override parent settings via longest-prefix matching.
 
 COMMANDS & WORKFLOWS
@@ -801,8 +902,9 @@ COMMANDS & WORKFLOWS
   sentinel view <ID>                Alias for 'sentinel nano <ID>'.
   sentinel restore <ID>             Restores revision <ID> with loop-coupling safety.
   sentinel diff <ID>                Outputs unified diff of revision <ID>.
-  sentinel init [MB] [start] [end]  Creates 'sentinel_marker' (default: 5 1 6).
+  sentinel init [MB] [start] [end]  Creates 'sentinel_marker' (default: 5 1 4).
   sentinel markers                  Lists active marked roots with size limits and active tiers.
+  sentinel whatsnew                 Displays patch notes and bugfixes for current/target release.
   sentinel service <cmd>            Manages systemd daemon: install | restart | status | stop | start.
   sentinel version                  Displays version, copyright, and license.
   sentinel help                     Displays this manual.
@@ -875,7 +977,6 @@ def live_as_you_type_filter(pool: list, search_mode: str) -> list:
     matches = list(pool)
     mode_label = "Dateiname (*)" if search_mode == "filename" else "Volltext (Inhalt)"
 
-    # Saubere 2-Zeilen-Initialisierung
     print()
     try:
         tty.setcbreak(fd)
@@ -899,12 +1000,9 @@ def live_as_you_type_filter(pool: list, search_mode: str) -> list:
 
             count_color = CLR_GREEN if len(matches) <= 45 else (CLR_YELLOW if len(matches) <= 200 else CLR_CYAN)
 
-            # Zeile 1: Statusleiste
             status_line = f"  {CLR_ICE}[Modus: {mode_label}]{CLR_RESET}  {CLR_ICE}Funde: {count_color}{len(matches):,}{CLR_RESET}  {CLR_ICE}|{CLR_RESET}  {CLR_ICE}ENTER = Anzeigen  |  ESC = Abbruch{CLR_RESET}"
-            # Zeile 2: Saubere Eingabezeile mit Cursor am Ende
             input_line  = f"  {CLR_LUM_BLUE}>{CLR_RESET} {CLR_ICE}{query}{CLR_RESET}"
 
-            # Cursor hoch, Zeile 1 leeren & schreiben, Zeile 2 leeren & schreiben
             UP = chr(27) + "[1A"
             CLEAR = chr(27) + "[K"
             sys.stdout.write(UP + chr(13) + CLEAR + status_line + chr(10) + chr(13) + CLEAR + input_line)
@@ -912,24 +1010,20 @@ def live_as_you_type_filter(pool: list, search_mode: str) -> list:
 
             ch = sys.stdin.read(1)
 
-            # ENTER
             if ch in ("\r", "\n"):
                 sys.stdout.write(chr(10))
                 sys.stdout.flush()
                 return matches
 
-            # BACKSPACE
             elif ch in ("\x7f", "\x08"):
                 if len(query) > 0:
                     query = query[:-1]
 
-            # ESC / STRG+C
             elif ch in ("\x03", "\x1b"):
                 sys.stdout.write(chr(10))
                 sys.stdout.flush()
                 return []
 
-            # Druckbares Zeichen
             elif ord(ch) >= 32:
                 query += ch
 
@@ -937,13 +1031,15 @@ def live_as_you_type_filter(pool: list, search_mode: str) -> list:
         termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
 
 def interactive_explorer():
+    check_for_updates()
+    check_and_upgrade_markers()
+
     cwd = os.getcwd()
     nearest_root, marker_path = find_nearest_marker(cwd)
     idx = load_index()
 
     div = f"{CLR_ICE}{'─' * 83}{CLR_RESET}"
 
-    # Minimalistischer, edler Header in Eis-Weiss & Leucht-Blau
     print(f"\n{div}")
     print(f" {CLR_LUM_BLUE}Shadow Sentinel v{__version__}{CLR_RESET}")
     print(f"{div}")
@@ -960,7 +1056,6 @@ def interactive_explorer():
     print(f"  {CLR_ICE}Catalog:{CLR_RESET}   {CLR_GREEN}{len(pool):,} backups tracked{CLR_RESET}")
     print(f"{div}")
 
-    # Aufgeraeumte Auswahl ohne ueberfluessige Worte
     print(f"\n{CLR_ICE}Select:{CLR_RESET}")
     print(f"  {CLR_YELLOW}[1]{CLR_RESET} {CLR_ICE}Search by Filename / Path / Tier (Wildcards *.py, *conf*, T4){CLR_RESET}")
     print(f"  {CLR_YELLOW}[2]{CLR_RESET} {CLR_ICE}Search by File Content (Full-text in backups){CLR_RESET}")
@@ -1075,6 +1170,28 @@ def cli_main():
 
     cmd = args[0]
 
+    # Intuitive Dienst-Schnellbefehle ohne 'service'
+    if cmd in ("restart", "--restart", "-restart"):
+        manage_service("restart")
+        return
+
+    if cmd in ("status", "--status", "-status"):
+        manage_service("status")
+        return
+
+    if cmd in ("stop", "--stop", "-stop"):
+        manage_service("stop")
+        return
+
+    if cmd in ("start", "--start", "-start"):
+        manage_service("start")
+        return
+
+    if cmd in ("whatsnew", "changes", "changelog"):
+        ver_arg = args[1] if len(args) > 1 else None
+        show_whats_new(ver_arg)
+        return
+
     if cmd in ("version", "--version", "-v"):
         print_version()
         return
@@ -1100,7 +1217,7 @@ def cli_main():
         with open(mfile, "w", encoding="utf-8") as f:
             f.write(f"{limit} {start_t} {end_t}\n")
         print(f"[INIT] Marker created: {mfile} (Ceiling: {limit} MB | Tiers: T{start_t}..T{end_t})")
-        print("Reload daemon with: sentinel service restart")
+        print("Reload daemon with: sentinel restart")
         return
 
     if cmd == "markers":
