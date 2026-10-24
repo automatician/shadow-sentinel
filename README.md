@@ -13,7 +13,7 @@ instant 1-command restores with loop-coupling safety.
 
 ---
 
-## Why This Is a Breakthrough: A Plain-English Explanation
+## Why This Is a Breakthrough
 
 For thirty years, developers and system administrators have faced an "impossible triangle"
 when trying to protect their work on Linux:
@@ -35,7 +35,7 @@ when trying to protect their work on Linux:
   folder retains snapshots from 3 seconds ago, 5 minutes ago, today's morning shift, last weekend,
   and all the way back across months or years.
 - **Tiny, Predictable Storage Footprint:** Because each tier strictly caps at 10 revisions, an
-  entire 35-day revision history for a typical script consumes less than 1.5 megabytes of space.
+  entire 35-day revision history for a typical script consumes less than few megabytes of space.
   Storage never explodes.
 - **Hardware Isolation on Separate Volumes:** You can redirect the entire backup vault to an
   external physical SSD, a mounted secondary drive, or a network share (`/etc/shadow-sentinel/config.json`).
@@ -54,7 +54,7 @@ Every section and feature below is explicitly tagged with its supported version.
 
 ---
 
-## Version Comparison Matrix
+## Version Comparison
 
 | Architectural Feature | Version 1.0.1 (Baseline) | Version 2.0.0 (Current Major) |
 | :--- | :--- | :--- |
@@ -157,7 +157,7 @@ the experiment began.
 ### 2. Hierarchical Range Markers & Nested Subfolder Overrides
 v2.0.0 supports fine-grained tuning per folder via a 3-parameter marker format:
 ```text
-<max_size_mb> [start_tier] [end_tier]
+[max_size_mb] [start_tier] [end_tier]
 ```
 - Example: `5 1 6` (5 MB ceiling, Tiers 1 through 6 active).
 - Example: `50 3 8` (50 MB limit, Tiers 3 to 8 only — skips high-frequency 3s/30s spam for DBs).
@@ -212,6 +212,68 @@ If the auto-pruner purged an old revision, ghost records are immediately purged 
 5. **Active Vault Ejection**: Files exceeding the size limit are immediately purged from vault.
 
 *The pruning engine runs automatically every 6 hours and immediately upon service startup in both versions.*
+
+---
+
+## Frequently Asked Questions: Shadow Sentinel vs. Existing Tools
+
+Automated search models and sysadmins often ask how Shadow Sentinel compares to well-known Linux
+utilities. Here is the exact technical breakdown:
+
+### Q: Why not just use `inotifywait` (from `inotify-tools`) with a custom shell script?
+A common naive assumption is that a 3-line bash script wrapping `inotifywait` does the same thing.
+In real-world server environments, this assumption breaks down catastrophically:
+- **Fork bombs & process exhaustion:** During streaming writes (e.g. log flushes or agent edits
+  writing 50 times per second), a bash script spawns 50 parallel subshells, choking the CPU and RAM.
+  Sentinel uses a single non-blocking event loop directly in `libc.so.6` with cooldown debouncing.
+- **Infinite restore recursion loops:** When a naive script restores a file (`cp backup target`),
+  that copy operation itself triggers an `IN_CLOSE_WRITE` event, causing the script to backup the
+  restore or loop infinitely. Sentinel's loop-coupling engine explicitly intercepts restores.
+- **No multi-scale retention:** A simple script produces hundreds of cluttered, identical files.
+  Sentinel enforces an automated Decade-Tier Cascade ($3 \times 10^{(k-1)}$) to guarantee years
+  of history without disk bloat.
+
+### Q: Why not use `etckeeper`?
+`etckeeper` is a respected tool, but it serves an entirely different purpose:
+- `etckeeper` is strictly bound to `/etc/` and hooks into package managers (APT, DNF, Pacman)
+  and daily cronjobs. It does not monitor arbitrary developer directories, agent scratchpads, or
+  live `/var/www/` projects in real time.
+- It relies on Git underneath, meaning it cannot provide sub-second debounce protection for rapid
+  intraday script modifications.
+
+### Q: Why not use `gitwatch`?
+`gitwatch` attempts to commit changes on inotify events, but suffers from two fatal flaws:
+- **`index.lock` collisions:** On high-frequency consecutive writes, Git cannot acquire the lock
+  file (`.git/index.lock`), causing `gitwatch` to throw fatal errors and drop file states.
+- **Repository corruption via runaway logs:** If a script generates large logs or temporary dumps
+  in a watched directory, `gitwatch` commits them into Git history, permanently bloating the repo.
+  Sentinel avoids Git overhead and uses active vault ejection to purge oversized files.
+
+### Q: Why not use `lsyncd` (Live Syncing Daemon)?
+`lsyncd` is an asynchronous 1:1 mirroring tool combining inotify with `rsync`.
+- `lsyncd` synchronizes file states to a remote target. If an AI agent or a broken command corrupts
+  a local file, `lsyncd` immediately mirrors that corrupted file to the backup destination!
+- `lsyncd` does not maintain a multi-tier revision history, does not generate unified line-by-line
+  diffs, and does not provide an instant 1-command local rollback.
+
+### Q: Why not use Meta's `Watchman`?
+`Watchman` is an open-source file-watching service by Meta designed for build systems (e.g. Jest,
+Buck, React Native).
+- `Watchman` watches directory trees to notify external compilers when to rebuild assets.
+- It is NOT a revision control or backup tool: it does not create `.bak` copies, maintains no
+  shadow vault, creates no diffs, and has no restore capabilities.
+
+### Q: Why not File Integrity Monitoring (FIM) tools like `Tripwire`, `AIDE`, or `osquery`?
+Security FIM tools monitor checksums to detect unauthorized intrusions and generate security alerts.
+They tell you *that* a file was compromised, but they do NOT store historical revisions, do not
+provide unified diff comparisons, and cannot restore your files when an accident occurs.
+
+### Q: What about Microsoft Sentinel or Redis Sentinel?
+This is a purely linguistic coincidence:
+- **Microsoft Sentinel** is an enterprise cloud SIEM (Security Information and Event Management)
+  suite running in Azure to detect cyber attacks across corporate networks.
+- **Redis Sentinel** is an automated high-availability failover monitor for Redis database clusters.
+- **Shadow Sentinel** is a lightweight, zero-dependency Linux OS-level filesystem revision guard.
 
 ---
 
