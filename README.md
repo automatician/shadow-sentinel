@@ -48,7 +48,8 @@ when trying to protect their work on Linux:
 
 This documentation serves as the Single Source of Truth (SSOT) for both production releases:
 - **Version 1.0.1 (Stable Baseline)**: Deployed on production servers via PyPI package `1.0.1`.
-- **Version 2.0.0 (Major Release)**: Advanced interactive TUI, decade cascade, and nano viewer.
+- **Version 2.0.1 (Current Major Release)**: Advanced interactive TUI, decade cascade, nano viewer,
+  marker migration assistant, and self-cleaning lifecycle.
 
 Every section and feature below is explicitly tagged with its supported version.
 
@@ -56,10 +57,11 @@ Every section and feature below is explicitly tagged with its supported version.
 
 ## Version Comparison
 
-| Architectural Feature | Version 1.0.1 (Baseline) | Version 2.0.0 (Current Major) |
+| Architectural Feature | Version 1.0.1 (Baseline) | Version 2.0.1 (Current Major) |
 | :--- | :--- | :--- |
 | **Kernel inotify (libc.so.6 ctypes)** | Yes (Zero deps) | Yes (Zero deps) |
 | **Marker Parameters** | 1 Parameter: `<size_mb>` | 3 Parameters: `<size_mb> [start] [end]` |
+| **Marker Migration Assistant** | Not available | Auto-detects & migrates legacy markers |
 | **Subfolder Policy Handling** | Parent inheritance only | Deepest marker wins (Longest prefix) |
 | **Backup Buffer Type** | Single 10-revision FIFO | Decade-Tier Cascade (T1..T128) |
 | **Max Retention Window** | 14 Days flat (all files) | Scaled: T1-4 (14d), T5-9 (60d), T10+ (365d) |
@@ -68,14 +70,17 @@ Every section and feature below is explicitly tagged with its supported version.
 | **Vault Ejection for Giant Files** | Yes (ejects > MB limit) | Yes (ejects > MB limit) |
 | **Restore Undo-Safety** | Yes (Loop-coupled) | Yes (Loop-coupled) |
 | **Terminal Display Mode** | Complete scrollable table | Interactive As-You-Type Live Explorer |
+| **Terminal Input Ergonomics** | Standard prompt | 2-line layout (status bar + clean prompt) |
 | **Search Engine** | Argument filter: `sentinel <term>` | Live typing wildcard (*) OR content grep |
 | **Direct File Inspection** | CLI only | Direct nano view (`sentinel nano <ID>`) |
 | **File Type Visual Classification** | Plain text paths | Functional extension icons (`📚`, `🐍`, etc.) |
 | **Catalog Integrity** | Append-only index | Self-healing (auto-purges ghost files) |
+| **Zombie Process Reaper** | Manual pkill required | Auto-terminates orphan daemons on boot |
+| **Automated Update Notifier** | Not available | Non-blocking PyPI check + `sentinel whatsnew` |
 
 ---
 
-## The AI Agent Dilemma [Applies to v1.0.1 and v2.0.0]
+## The AI Agent Dilemma [Applies to v1.0.1 and v2.0.1]
 
 Autonomous AI coding agents, Copilots, and LLM automation pipelines are transforming development.
 However, they introduce a terrifying new failure mode: **silent, automated destruction of code**.
@@ -105,7 +110,7 @@ The microsecond an AI agent or automated script calls `write()` or overwrites a 
 
 ---
 
-## Core Engine Capabilities (Available in v1.0.1 and v2.0.0)
+## Core Engine Capabilities (Available in v1.0.1 and v2.0.1)
 
 1. **Decentralized Marker Control (`sentinel_marker`)**:
    - No tedious editing of central configuration files.
@@ -135,11 +140,11 @@ The microsecond an AI agent or automated script calls `write()` or overwrites a 
 
 ---
 
-## Major Architecture Additions in Version 2.0.0
+## Major Architecture Additions in Version 2.0.1
 
 ### 1. Decade-Tier Cascade Ring Buffers (Up to Tier 128)
 Rather than a single FIFO buffer that risks being pushed out by rapid repetitive loops,
-v2.0.0 introduces a geometric order-of-magnitude cascade ($3 \times 10^{(k-1)}$ seconds):
+v2.0.1 introduces a geometric order-of-magnitude cascade ($3 \times 10^{(k-1)}$ seconds):
 - **Tier 1 (3s):** Immediate typos and terminal misclicks (spans 30 seconds).
 - **Tier 2 (30s):** Rapid script loops and syntax breakages (spans 5 minutes).
 - **Tier 3 (300s):** 5-minute session checkpoints (spans 50 minutes).
@@ -155,27 +160,34 @@ wild in a 5-second loop all night long, Tiers 4, 5, and 6 retain the pristine co
 the experiment began.
 
 ### 2. Hierarchical Range Markers & Nested Subfolder Overrides
-v2.0.0 supports fine-grained tuning per folder via a 3-parameter marker format:
+v2.0.1 supports fine-grained tuning per folder via a 3-parameter marker format:
 ```text
 [max_size_mb] [start_tier] [end_tier]
 ```
-- Example: `5 1 6` (5 MB ceiling, Tiers 1 through 6 active).
+- Example: `5 1 4` (5 MB ceiling, Tiers 1 through 4 active — default for developer projects).
 - Example: `50 3 8` (50 MB limit, Tiers 3 to 8 only — skips high-frequency 3s/30s spam for DBs).
 Nested subdirectories automatically override parent policies using longest-prefix matching.
 
-### 3. Interactive Guided Live-Filter Explorer (TUI)
+### 3. Marker Migration Assistant
+v2.0.1 detects legacy single-parameter markers (e.g. `5` or empty files) and automatically
+prompts the admin to upgrade them to the modern 3-parameter format (`5 1 4`), preserving existing
+size limits while activating the cascade.
+
+### 4. Interactive Guided Live-Filter Explorer (TUI)
 Running `sentinel` with no arguments in a terminal launches the interactive explorer:
 - Automatically detects terminal height (`shutil.get_terminal_size()`) to prevent scroll cutoffs.
 - **As-You-Type Live Search:** Type search terms without pressing Enter; the match counter updates
   live on every keystroke. Backspace edits query in-place.
 - **Dual Search Modes:** Search by filename wildcard (`*.py`, `*conf*`, `T4`) OR full-text content
   search across backup files.
+- **Ergonomic 2-Line Prompt:** Status bar positioned above the active input line; cursor remains
+  naturally positioned behind typed characters.
 
-### 4. Direct Nano Viewer
+### 5. Direct Nano Viewer
 Inspect historic `.bak` files inside nano in read-only mode (`sentinel nano <ID>`).
 Exit nano (`Ctrl+X`) to return directly to the Sentinel explorer.
 
-### 5. Extension-Based File Classification Icons
+### 6. Extension-Based File Classification Icons
 Table outputs visually categorize files by extension:
 - `🐍` Python (`.py`, `.pyw`)
 - `🐚` Shell Scripts (`.sh`, `.bash`, `.zsh`)
@@ -185,9 +197,19 @@ Table outputs visually categorize files by extension:
 - `📋` Logs (`.log`, `.out`, `.err`)
 - `📝` Plain Text (`.txt`, `.csv`, `.rst`)
 
-### 6. Self-Healing Catalog Index
+### 7. Self-Healing Catalog Index
 The catalog automatically validates that physical `.bak` files exist on disk during every load.
 If the auto-pruner purged an old revision, ghost records are immediately purged from the index.
+
+### 8. Self-Cleaning Service Lifecycle & Zombie Reaper
+`sentinel service install` and `sentinel restart` automatically scan for and terminate orphaned
+legacy background daemons (including older test environments or unmanaged processes) and ensure
+systemd binds strictly to the active Python binary.
+
+### 9. Automated PyPI Update Notifier & Patch Inspector
+Sentinel periodically performs a non-blocking 1-second check against PyPI. When a newer release
+exists, a clean notification banner is displayed with upgrade instructions. Run `sentinel whatsnew`
+at any time to view structured patch highlights for the current release.
 
 ---
 
@@ -200,7 +222,7 @@ If the auto-pruner purged an old revision, ghost records are immediately purged 
 4. **Emergency Storage Ceiling (500 MB Cap)**: Purges oldest revisions to 80% (400 MB) if exceeded.
 5. **Active Vault Ejection**: Files exceeding the size limit in `sentinel_marker` are purged from vault.
 
-### Retention Rules in Version 2.0.0:
+### Retention Rules in Version 2.0.1:
 1. **Version Cap per Tier**: Each active tier retains strictly its 10 newest `.bak` files.
 2. **Tier-Based Retention Schedule (from backup creation date)**:
    - **Tiers 1 to 4**: Retained for **2 Weeks (14 Days)**.
@@ -279,18 +301,26 @@ This is a purely linguistic coincidence:
 
 ## Installation
 
-### Installing Version 2.0.0 (Latest Release):
+### Universal 1-Command Installer (Recommended for all Linux distributions):
+```bash
+curl -sSL https://raw.githubusercontent.com/automatician/shadow-sentinel/main/install.sh | sudo bash
+```
+
+### Or via Pipx:
+```bash
+pipx install shadow-sentinel
+sudo sentinel service install
+```
+
+### Or via standard pip (inside virtual environments):
 ```bash
 pip install shadow-sentinel
+sudo sentinel service install
 ```
 
-### Installing Version 1.0.1 (Legacy Stable Baseline):
+### Legacy v1.0.1 Baseline Installation:
 ```bash
 pip install shadow-sentinel==1.0.1
-```
-
-Set up and start the systemd background service in one step:
-```bash
 sudo sentinel service install
 ```
 
@@ -307,18 +337,20 @@ sudo sentinel service install
 | `sentinel view <ID>` | `v2.0+` | Alias for `sentinel nano <ID>`. |
 | `sentinel restore <ID>` | `v1.0+` | Restores revision `<ID>` with loop-coupling safety. |
 | `sentinel diff <ID>` | `v1.0+` | Outputs unified diff of revision `<ID>` to stdout. |
-| `sentinel init [MB]` | `v1.0+` | Initializes marker with size limit (defaults to T1..T6 in v2.0+). |
+| `sentinel init [MB]` | `v1.0+` | Initializes marker with size limit (defaults to T1..T4 in v2.0.1+). |
 | `sentinel init [MB] [start] [end]` | `v2.0+` | Initializes marker with custom cascade range (e.g. `10 3 8`). |
-| `sentinel markers` | `v1.0+` | Lists all active marked roots with size limits and active tiers. |
+| `sentinel markers` | `v1.0+` | Lists active marked roots with size limits and active tiers. |
+| `sentinel whatsnew` | `v2.0.1+` | Displays structured release notes and patch highlights. |
+| `sentinel restart` | `v2.0.1+` | Intuitive direct alias to restart background service cleanly. |
 | `sentinel service install` | `v1.0+` | Installs and enables systemd background service. |
-| `sentinel service restart` | `v1.0+` | Restarts systemd daemon (rescans all markers). |
+| `sentinel service restart` | `v1.0+` | Restarts systemd daemon (kills zombies, rescans all markers). |
 | `sentinel service status` | `v1.0+` | Displays systemd service status. |
 | `sentinel version` | `v1.0+` | Displays version, copyright, and SPDX license info. |
 | `sentinel help` | `v1.0+` | Displays full interactive manual. |
 
 ---
 
-## Storage & Configuration [v1.0.1 & v2.0.0]
+## Storage & Configuration [v1.0.1 & v2.0.1]
 
 ### Linux FHS Standard Paths:
 - **Root Daemon:** `/var/lib/shadow-sentinel/`
