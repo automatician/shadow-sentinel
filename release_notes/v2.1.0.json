@@ -1,0 +1,12 @@
+{
+  "version": "2.1.0",
+  "date": "2026-10-21",
+  "title": "Multi-Tenant Path-Hashing & Column Alignment",
+  "highlights": [
+    "Multi-tenant path hashing: 6-char directory hash prevents collisions between identical filenames across different projects",
+    "Pixel-perfect column alignment: ANSI color codes decoupled from table width calculations",
+    "Independent tier pruning: backup rotation strictly isolated per directory and path hash",
+    "Explicit restore confirmation dialog with full target and source path verification"
+  ],
+  "upgrade_command": "pip install --upgrade shadow-sentinel && sentinel restart"
+}

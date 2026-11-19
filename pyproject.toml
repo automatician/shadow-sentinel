@@ -4,11 +4,11 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "shadow-sentinel"
-version = "2.0.1"
+version = "2.1.0"
 authors = [
   { name="automatician", email="235166879+automatician@users.noreply.github.com" },
 ]
-description = "Autonomous OS-level revision & backup guard with PyPI update notifier and self-cleaning lifecycle"
+description = "Autonomous OS-level revision guard with multi-tenant path-hashing and immutable IDs"
 readme = "README.md"
 license = "CC-BY-SA-3.0"
 requires-python = ">=3.9"

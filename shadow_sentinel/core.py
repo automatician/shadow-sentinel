@@ -13,8 +13,8 @@
 # ==============================================================================
 
 """
-Shadow Sentinel Core Engine v2.0.1
-Interactive Guided ASCII Explorer with Nano Viewer, Decade Cascade & Marker Migration
+Shadow Sentinel Core Engine v2.1.0
+Multi-Tenant Path Hashing, Immutable IDs & Column-Aligned Interactive Explorer
 """
 
 import os
@@ -40,18 +40,17 @@ try:
 except ImportError:
     HAS_TERMIOS = False
 
-__version__   = "2.0.1"
+__version__   = "2.1.0"
 __author__    = "automatician (Torsten Frieser)"
 __copyright__ = "Copyright (c) 2026 automatician (Torsten Frieser), Germany / Saxony / Zittau"
 __license__   = "CC-BY-SA-3.0"
 
-# Satte Farbpalette: Eis-Weiss (mit Blauanteil), Kraeftiges Leucht-Blau, Reingelb
 CLR_RESET    = "\033[0m"
-CLR_ICE      = "\033[38;5;195m"       # Echtes Eis-Weiss (arktisch-helles Weiss)
-CLR_LUM_BLUE = "\033[38;5;33m"        # Kraeftiges, leuchtendes Dunkelblau
-CLR_CYAN     = "\033[38;5;33m"        # Alias fuer Leucht-Blau
-CLR_YELLOW   = "\033[38;5;220m"       # Satte gelbe Ziffern
-CLR_GREEN    = "\033[38;5;82m"        # Sattes Gruen
+CLR_ICE      = "\033[38;5;195m"
+CLR_LUM_BLUE = "\033[38;5;33m"
+CLR_CYAN     = "\033[38;5;33m"
+CLR_YELLOW   = "\033[38;5;220m"
+CLR_GREEN    = "\033[38;5;82m"
 CLR_GRAY     = "\033[38;5;244m"
 CLR_DIM      = "\033[2m"
 
@@ -88,12 +87,12 @@ CENTRAL_BASE, BACKUP_DIR, VAULT_DIR, INDEX_FILE = get_storage_dirs()
 MAX_COPIES_PER_TIER  = 10
 MAX_ALLOWED_TIERS    = 128
 DEFAULT_START_TIER   = 1
-DEFAULT_END_TIER     = 4       # Standard T1..T4
+DEFAULT_END_TIER     = 4
 DEFAULT_MAX_FILE_MB  = 5
 MAX_LOG_AGE_DAYS     = 30
 MAX_BACKUP_DIR_MB    = 500
 PRUNE_INTERVAL_SEC   = 21600
-COOLDOWN_SEC         = 3
+COOLDOWN_SEC         = 0.5
 
 os.makedirs(BACKUP_DIR, exist_ok=True)
 os.makedirs(VAULT_DIR, exist_ok=True)
@@ -112,8 +111,13 @@ EVENT_MASK = IN_CLOSE_WRITE | IN_DELETE | IN_MOVED_FROM | IN_MOVED_TO | IN_CREAT
 running = True
 last_prune_ts = 0
 pending_writes = {}
-marker_targets = {}  # {abs_dir: (max_size_bytes, start_tier, end_tier)}
-tier_last_snapshot = {}  # {(abs_path, tier_num): timestamp}
+marker_targets = {}
+tier_last_snapshot = {}
+
+def get_path_hash(abs_path: str) -> str:
+    """Erzeugt einen eindeutigen 6-stelligen Hash des Verzeichnispfades."""
+    dir_path = os.path.dirname(os.path.abspath(abs_path))
+    return hashlib.sha256(dir_path.encode("utf-8")).hexdigest()[:6]
 
 def get_file_type_icon(filename: str) -> str:
     fname = filename.lower()
@@ -160,11 +164,11 @@ def get_tier_interval(tier_k: int) -> int:
 
 def get_tier_retention_days(tier_num: int) -> int:
     if tier_num <= 4:
-        return 14       # 2 Wochen (T1-T4)
+        return 14
     elif tier_num <= 9:
-        return 60       # 2 Monate (T5-T9)
+        return 60
     else:
-        return 365      # 12 Monate (T10+)
+        return 365
 
 def parse_marker_file(mpath: str) -> tuple:
     size_mb = DEFAULT_MAX_FILE_MB
@@ -205,7 +209,6 @@ def parse_marker_file(mpath: str) -> tuple:
     return size_mb, start_tier, end_tier
 
 def check_and_upgrade_markers():
-    """Findet alte 1-Parameter Marker und bietet Upgrade auf [MB 1 4] an."""
     m_list = []
     cmd = ["find", "/", "-name", "sentinel_marker", "-o", "-name", ".sentinel_marker"]
     try:
@@ -222,7 +225,6 @@ def check_and_upgrade_markers():
                 raw = f.read().strip()
             parts = re.split(r"[\s,]+", raw) if raw else []
             if len(parts) < 3:
-                # Altes Format erkannt!
                 cur_mb = parts[0] if len(parts) >= 1 and parts[0] else str(DEFAULT_MAX_FILE_MB)
                 print(f"\n{CLR_YELLOW}[MIGRATION HINWEIS]{CLR_RESET} Marker in {CLR_ICE}{mp}{CLR_RESET} hat altes Format ({raw or 'leer'}).")
                 ans = input(f"Auf v2.x Standard '{cur_mb} 1 4' aktualisieren? [Y/n]: ").strip().lower()
@@ -253,20 +255,20 @@ def load_index() -> list:
         except Exception:
             entries = []
 
-    # Self-Healing: Geister-Eintraege physisch geloeschter Dateien entfernen
     valid_entries = []
-    modified = False
     for item in entries:
         bp = resolve_bak_path(item.get("bak_file", ""))
         if os.path.exists(bp):
             valid_entries.append(item)
-        else:
-            modified = True
     entries = valid_entries
 
     existing_baks = {item.get("bak_file") for item in entries}
-    pattern = re.compile(r"^(.*?)\.(T\d+)\.(\d{8}_\d{6})\.(bak|deleted\.bak)$")
-    legacy_pattern = re.compile(r"^(.*?)\.(\d{8}_\d{6})\.(bak|deleted\.bak)$")
+    
+    # 3 Pattern-Stufen: mit Pfad-Hash (neu), ohne Hash (v2), Legacy (v1)
+    pattern_hash = re.compile(r"^(.*?)\.([a-f0-9]{6})\.(T\d+)\.(\d{8}_\d{6})\.(bak|deleted\.bak)$")
+    pattern_tier = re.compile(r"^(.*?)\.(T\d+)\.(\d{8}_\d{6})\.(bak|deleted\.bak)$")
+    pattern_leg  = re.compile(r"^(.*?)\.(\d{8}_\d{6})\.(bak|deleted\.bak)$")
+    modified = False
 
     if os.path.exists(BACKUP_DIR):
         for fname in sorted(os.listdir(BACKUP_DIR)):
@@ -277,19 +279,24 @@ def load_index() -> list:
             ts_str = ""
             orig_name = ""
 
-            m_tier = pattern.match(fname)
-            if m_tier:
-                orig_name = m_tier.group(1)
-                tier_label = m_tier.group(2)
-                ts_str = m_tier.group(3)
+            m1 = pattern_hash.match(fname)
+            m2 = pattern_tier.match(fname)
+            m3 = pattern_leg.match(fname)
+
+            if m1:
+                orig_name = m1.group(1)
+                tier_label = m1.group(3)
+                ts_str = m1.group(4)
+            elif m2:
+                orig_name = m2.group(1)
+                tier_label = m2.group(2)
+                ts_str = m2.group(3)
+            elif m3:
+                orig_name = m3.group(1)
+                tier_label = "T1"
+                ts_str = m3.group(2)
             else:
-                m_leg = legacy_pattern.match(fname)
-                if m_leg:
-                    orig_name = m_leg.group(1)
-                    tier_label = "T1"
-                    ts_str = m_leg.group(2)
-                else:
-                    continue
+                continue
 
             fpath = os.path.join(BACKUP_DIR, fname)
             orig_path = os.path.join(CENTRAL_BASE, orig_name)
@@ -302,8 +309,9 @@ def load_index() -> list:
             except Exception:
                 formatted_ts = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(os.path.getmtime(fpath)))
 
+            next_id = max([item.get("id", 0) for item in entries], default=0) + 1
             entries.append({
-                "id": len(entries) + 1,
+                "id": next_id,
                 "orig_path": os.path.abspath(orig_path),
                 "bak_file": fname,
                 "diff_file": diff_file,
@@ -314,8 +322,7 @@ def load_index() -> list:
             existing_baks.add(fname)
             modified = True
 
-    if modified or not os.path.exists(INDEX_FILE):
-        # IDs bleiben absolut stabil und unveraenderlich!
+    if modified:
         save_index(entries)
 
     return entries
@@ -421,7 +428,8 @@ def auto_prune_backups():
     deleted_count = 0
     freed_bytes = 0
 
-    pattern = re.compile(r"^(.*?)\.(T\d+)\.(\d{8}_\d{6})\.(bak|diff|deleted\.bak)$")
+    p_hash = re.compile(r"^(.*?)\.([a-f0-9]{6})\.(T\d+)\.(\d{8}_\d{6})\.(bak|diff|deleted\.bak)$")
+    p_tier = re.compile(r"^(.*?)\.(T\d+)\.(\d{8}_\d{6})\.(bak|diff|deleted\.bak)$")
     file_groups = {}
 
     for fname in os.listdir(BACKUP_DIR):
@@ -440,19 +448,30 @@ def auto_prune_backups():
                 pass
             continue
 
-        match = pattern.match(fname)
-        if match:
-            orig_name = match.group(1)
-            tier_tag = match.group(2)
-            ext_type = match.group(4)
-            key = (orig_name, tier_tag, ext_type)
-            if key not in file_groups:
-                file_groups[key] = []
-            file_groups[key].append((fname, fpath, os.path.getmtime(fpath), os.path.getsize(fpath)))
+        m1 = p_hash.match(fname)
+        m2 = p_tier.match(fname)
 
-    # Haltedauer: T1-T4 = 14d, T5-T9 = 60d, T10+ = 365d
+        if m1:
+            orig_name = m1.group(1)
+            phash = m1.group(2)
+            tier_tag = m1.group(3)
+            ext_type = m1.group(5)
+            key = (orig_name, phash, tier_tag, ext_type)
+        elif m2:
+            orig_name = m2.group(1)
+            phash = "legacy"
+            tier_tag = m2.group(2)
+            ext_type = m2.group(4)
+            key = (orig_name, phash, tier_tag, ext_type)
+        else:
+            continue
+
+        if key not in file_groups:
+            file_groups[key] = []
+        file_groups[key].append((fname, fpath, os.path.getmtime(fpath), os.path.getsize(fpath)))
+
     for key, items in file_groups.items():
-        orig_name, tier_tag, ext_type = key
+        orig_name, phash, tier_tag, ext_type = key
         try:
             tier_num = int(tier_tag.replace("T", ""))
         except Exception:
@@ -482,7 +501,6 @@ def auto_prune_backups():
                 except Exception:
                     pass
 
-    # 500 MB Notbremse
     total_size = sum(os.path.getsize(os.path.join(BACKUP_DIR, f)) for f in os.listdir(BACKUP_DIR) if os.path.isfile(os.path.join(BACKUP_DIR, f)))
     max_bytes = MAX_BACKUP_DIR_MB * 1024 * 1024
 
@@ -576,6 +594,7 @@ def handle_file_written(abs_path: str):
 
     ts = time.strftime("%Y%m%d_%H%M%S")
     base_name = os.path.basename(abs_path)
+    phash = get_path_hash(abs_path)
     now = time.time()
 
     if os.path.exists(vault_path):
@@ -586,11 +605,11 @@ def handle_file_written(abs_path: str):
                 last_shot = tier_last_snapshot.get((abs_path, k), 0)
 
                 if (now - last_shot) >= tier_interval:
-                    bak_name = f"{base_name}.T{k}.{ts}.bak"
+                    bak_name = f"{base_name}.{phash}.T{k}.{ts}.bak"
                     bak_path = os.path.join(BACKUP_DIR, bak_name)
                     shutil.copy2(vault_path, bak_path)
 
-                    diff_name = f"{base_name}.T{k}.{ts}.diff"
+                    diff_name = f"{base_name}.{phash}.T{k}.{ts}.diff"
                     diff_path = os.path.join(BACKUP_DIR, diff_name)
                     try:
                         with open(vault_path, "r", encoding="utf-8", errors="replace") as fo, \
@@ -626,11 +645,12 @@ def handle_file_deleted(abs_path: str):
 
     vault_path = get_vault_path(abs_path)
     base_name = os.path.basename(abs_path)
+    phash = get_path_hash(abs_path)
     _, start_tier, _ = get_params_for_file(abs_path)
 
     if os.path.exists(vault_path):
         ts = time.strftime("%Y%m%d_%H%M%S")
-        del_bak = f"{base_name}.T{start_tier}.{ts}.deleted.bak"
+        del_bak = f"{base_name}.{phash}.T{start_tier}.{ts}.deleted.bak"
         bak_path = os.path.join(BACKUP_DIR, del_bak)
         shutil.copy2(vault_path, bak_path)
 
@@ -757,7 +777,6 @@ def manage_service(action: str):
     service_file = "/etc/systemd/system/shadow-sentinel.service"
     py_exec = shutil.which("python3") or sys.executable
 
-    # ZOMBIE-KILLER: Beendet vor jeder Dienst-Aktion alle alten Geister-Prozesse
     if action in ("install", "restart", "start"):
         try:
             subprocess.run(["pkill", "-9", "-f", "mre_filesystem_sentinel.py"], stderr=subprocess.DEVNULL)
@@ -859,7 +878,7 @@ def check_for_updates():
                     print(f"  {CLR_ICE}Patch highlights in v{latest_v}:{CLR_RESET}")
                     for h in notes.get("highlights", [])[:3]:
                         print(f"    {CLR_GREEN}•{CLR_RESET} {h}")
-                print(f"  {CLR_ICE}Upgrade command:{CLR_RESET}   {CLR_CYAN}pip install --upgrade shadow-sentinel && sentinel service restart{CLR_RESET}")
+                print(f"  {CLR_ICE}Upgrade command:{CLR_RESET}   {CLR_CYAN}pip install --upgrade shadow-sentinel && sentinel restart{CLR_RESET}")
                 print(f"  {CLR_DIM}Run 'sentinel whatsnew' for full changelog details.{CLR_RESET}")
                 print(f"{CLR_YELLOW}───────────────────────────────────────────────────────────────────────────────────{CLR_RESET}\n")
     except Exception:
@@ -868,7 +887,7 @@ def check_for_updates():
 def show_help():
     manual = f"""
 ====================================================================================================
-SHADOW SENTINEL v{__version__} - INTERACTIVE DECADE-TIER CASCADE REVISION GUARD
+SHADOW SENTINEL v{__version__} - MULTI-TENANT DECADE-TIER CASCADE REVISION GUARD
 ====================================================================================================
 
 VERSION & LICENSE
@@ -888,12 +907,9 @@ DECADE-TIER CASCADE ARCHITECTURE
     - T6 (300000s):  3.5-day milestones covering over a month (35+ days).
     - Up to T128:    Configurable decades scaling up to years and decades.
 
-MARKER HIERARCHY & RANGE SYNTAX
-  Drop 'sentinel_marker' in any root directory or nested subfolder:
-    Format:  <max_size_mb> [start_tier] [end_tier]
-    Example: 5 1 4   (5 MB limit, Tiers 1 through 4 active)
-    Example: 50 3 8  (50 MB limit, Tiers 3 through 8 only - skips rapid 3s/30s spam)
-  Nested subfolders automatically override parent settings via longest-prefix matching.
+MULTI-TENANT PATH HASHING
+  Backups incorporate a 6-character directory hash ([basename].[hash].T[tier].[ts].bak).
+  Identical filenames across different project trees or webspaces never collide.
 
 COMMANDS & WORKFLOWS
   sentinel                          Launches Interactive Guided Live-Filter Explorer.
@@ -905,6 +921,7 @@ COMMANDS & WORKFLOWS
   sentinel init [MB] [start] [end]  Creates 'sentinel_marker' (default: 5 1 4).
   sentinel markers                  Lists active marked roots with size limits and active tiers.
   sentinel whatsnew                 Displays patch notes and bugfixes for current/target release.
+  sentinel restart                  Restarts background service cleanly.
   sentinel service <cmd>            Manages systemd daemon: install | restart | status | stop | start.
   sentinel version                  Displays version, copyright, and license.
   sentinel help                     Displays this manual.
@@ -920,14 +937,25 @@ def render_table(items: list, nearest_root: str):
     print(header)
 
     for item in reversed(items):
-        diff_label = f"{CLR_GREEN}[YES]{CLR_RESET}" if item.get("diff_file") else f"{CLR_GRAY}[--]{CLR_RESET}"
-        tier_label = f"{CLR_CYAN}[{item.get('tier', 'T1')}]{CLR_RESET}"
-        size_kb = f"{round(item.get('size_bytes', 0) / 1024, 1)} KB"
+        raw_id   = f"[{item['id']}]"
+        raw_ts   = item['timestamp']
+        raw_tier = f"[{item.get('tier', 'T1')}]"
+        raw_size = f"{round(item.get('size_bytes', 0) / 1024, 1)} KB"
+        raw_diff = "[YES]" if item.get("diff_file") else "[--]"
+        
         display_path = item["orig_path"]
         if nearest_root and display_path.startswith(nearest_root):
             display_path = os.path.relpath(display_path, nearest_root)
         type_icon = get_file_type_icon(display_path)
-        print(f"[{item['id']}]   {item['timestamp']:<20} {tier_label:<17} {size_kb:<12} {diff_label:<15} {type_icon:<6} {display_path}")
+
+        c_id   = f"{raw_id:<6}"
+        c_ts   = f"{raw_ts:<20}"
+        c_tier = f"{CLR_CYAN}{raw_tier:<8}{CLR_RESET}"
+        c_size = f"{raw_size:<12}"
+        c_diff = f"{CLR_GREEN if item.get('diff_file') else CLR_GRAY}{raw_diff:<6}{CLR_RESET}"
+        c_type = f"{type_icon:<5}"
+
+        print(f"{c_id} {c_ts} {c_tier} {c_size} {c_diff} {c_type} {display_path}")
 
     print(f"{CLR_GRAY}{'─' * 102}{CLR_RESET}")
 
@@ -1030,7 +1058,24 @@ def live_as_you_type_filter(pool: list, search_mode: str) -> list:
     finally:
         termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
 
+def flush_pending_local_changes():
+    cwd = os.getcwd()
+    nearest_root, marker_path = find_nearest_marker(cwd)
+    if not nearest_root or not os.path.exists(nearest_root):
+        return
+
+    for root, dirs, files in os.walk(nearest_root):
+        dirs[:] = [d for d in dirs if not is_sentinel_internal(os.path.join(root, d))]
+        for f in files:
+            fpath = os.path.join(root, f)
+            if not is_monitored_file(fpath):
+                continue
+            vpath = get_vault_path(fpath)
+            if not os.path.exists(vpath) or get_sha256(fpath) != get_sha256(vpath):
+                handle_file_written(fpath)
+
 def interactive_explorer():
+    flush_pending_local_changes()
     check_for_updates()
     check_and_upgrade_markers()
 
@@ -1120,7 +1165,6 @@ def action_subloop(pool: list, nearest_root: str):
             print(f"{CLR_YELLOW}Unknown action. Enter r <ID>, d <ID>, v <ID>, n (new search), or q.{CLR_RESET}")
 
 def execute_restore(target_id: str, context_pool=None):
-    # Sucht bevorzugt im aktuell angezeigten Bildschirmpool!
     found = None
     if context_pool:
         found = next((item for item in context_pool if str(item.get("id")) == str(target_id)), None)
@@ -1139,7 +1183,6 @@ def execute_restore(target_id: str, context_pool=None):
         print(f"{CLR_YELLOW}[ERROR] Backup-Datei fehlt: {bak_path}{CLR_RESET}")
         return
 
-    # SICHERHEITS-BESTAETIGUNG
     print(f"\n{CLR_ICE}Bestätigung zur Wiederherstellung:{CLR_RESET}")
     print(f"  {CLR_ICE}Ziel-Datei:{CLR_RESET}   {CLR_CYAN}{orig_path}{CLR_RESET}")
     print(f"  {CLR_ICE}Quelle-Stand:{CLR_RESET} {found['bak_file']} ({found.get('timestamp')})")
@@ -1151,13 +1194,13 @@ def execute_restore(target_id: str, context_pool=None):
     os.makedirs(os.path.dirname(orig_path), exist_ok=True)
     shutil.copy2(bak_path, orig_path)
     print(f"\n{CLR_GREEN}[SUCCESS] Revision {target_id} wiederhergestellt nach:{CLR_RESET}\n  -> {orig_path}")
-    print(f"{CLR_CYAN}[SAFETY] Loop-coupling active: Vorheriger Zustand wurde gesichert!{CLR_RESET}\n")
+    print(f"{CLR_CYAN}[SAFETY] Loop-coupling active: Vorheriger Zustand gesichert!{CLR_RESET}\n")
 
 def execute_diff(target_id: str):
     idx = load_index()
     found = next((item for item in idx if str(item.get("id")) == str(target_id)), None)
     if not found or not found.get("diff_file"):
-        print(f"{CLR_YELLOW}[INFO] No diff available for ID {target_id}.{CLR_RESET}")
+        print(f"{CLR_YELLOW}[INFO] Kein Diff für ID {target_id} vorhanden.{CLR_RESET}")
         return
     diff_path = os.path.join(BACKUP_DIR, found["diff_file"])
     if os.path.exists(diff_path):
@@ -1188,7 +1231,6 @@ def cli_main():
 
     cmd = args[0]
 
-    # Intuitive Dienst-Schnellbefehle ohne 'service'
     if cmd in ("restart", "--restart", "-restart"):
         manage_service("restart")
         return
@@ -1271,6 +1313,7 @@ def cli_main():
         execute_restore(args[1])
         return
 
+    flush_pending_local_changes()
     cwd = os.getcwd()
     nearest_root, marker_path = find_nearest_marker(cwd)
     idx = load_index()
