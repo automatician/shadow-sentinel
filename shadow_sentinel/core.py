@@ -315,9 +315,7 @@ def load_index() -> list:
             modified = True
 
     if modified or not os.path.exists(INDEX_FILE):
-        entries.sort(key=lambda x: x.get("timestamp", ""))
-        for idx, item in enumerate(entries, 1):
-            item["id"] = idx
+        # IDs bleiben absolut stabil und unveraenderlich!
         save_index(entries)
 
     return entries
@@ -1109,7 +1107,7 @@ def action_subloop(pool: list, nearest_root: str):
         if cmd_char in ("r", "restore"):
             if not arg_id:
                 arg_id = input(f"{CLR_ICE}Enter ID to restore: {CLR_RESET}").strip()
-            execute_restore(arg_id)
+            execute_restore(arg_id, pool)
         elif cmd_char in ("d", "diff"):
             if not arg_id:
                 arg_id = input(f"{CLR_ICE}Enter ID for diff: {CLR_RESET}").strip()
@@ -1121,21 +1119,39 @@ def action_subloop(pool: list, nearest_root: str):
         else:
             print(f"{CLR_YELLOW}Unknown action. Enter r <ID>, d <ID>, v <ID>, n (new search), or q.{CLR_RESET}")
 
-def execute_restore(target_id: str):
-    idx = load_index()
-    found = next((item for item in idx if str(item.get("id")) == str(target_id)), None)
+def execute_restore(target_id: str, context_pool=None):
+    # Sucht bevorzugt im aktuell angezeigten Bildschirmpool!
+    found = None
+    if context_pool:
+        found = next((item for item in context_pool if str(item.get("id")) == str(target_id)), None)
     if not found:
-        print(f"{CLR_YELLOW}[ERROR] Revision ID {target_id} not found.{CLR_RESET}")
+        idx = load_index()
+        found = next((item for item in idx if str(item.get("id")) == str(target_id)), None)
+
+    if not found:
+        print(f"{CLR_YELLOW}[ERROR] Revision ID {target_id} nicht gefunden.{CLR_RESET}")
         return
+
     bak_path = resolve_bak_path(found["bak_file"])
     orig_path = found["orig_path"]
+
     if not os.path.exists(bak_path):
-        print(f"{CLR_YELLOW}[ERROR] Backup file missing: {bak_path}{CLR_RESET}")
+        print(f"{CLR_YELLOW}[ERROR] Backup-Datei fehlt: {bak_path}{CLR_RESET}")
         return
+
+    # SICHERHEITS-BESTAETIGUNG
+    print(f"\n{CLR_ICE}Bestätigung zur Wiederherstellung:{CLR_RESET}")
+    print(f"  {CLR_ICE}Ziel-Datei:{CLR_RESET}   {CLR_CYAN}{orig_path}{CLR_RESET}")
+    print(f"  {CLR_ICE}Quelle-Stand:{CLR_RESET} {found['bak_file']} ({found.get('timestamp')})")
+    ans = input(f"{CLR_YELLOW}Wirklich wiederherstellen? [y/N]: {CLR_RESET}").strip().lower()
+    if ans not in ("y", "yes", "ja"):
+        print(f"{CLR_GRAY}[ABBRUCH] Wiederherstellung abgebrochen.{CLR_RESET}\n")
+        return
+
     os.makedirs(os.path.dirname(orig_path), exist_ok=True)
     shutil.copy2(bak_path, orig_path)
-    print(f"\n{CLR_GREEN}[SUCCESS] Revision {target_id} restored to:{CLR_RESET}\n  -> {orig_path}")
-    print(f"{CLR_CYAN}[SAFETY] Loop-coupling active: Overwritten state captured into fresh safety backup!{CLR_RESET}\n")
+    print(f"\n{CLR_GREEN}[SUCCESS] Revision {target_id} wiederhergestellt nach:{CLR_RESET}\n  -> {orig_path}")
+    print(f"{CLR_CYAN}[SAFETY] Loop-coupling active: Vorheriger Zustand wurde gesichert!{CLR_RESET}\n")
 
 def execute_diff(target_id: str):
     idx = load_index()
